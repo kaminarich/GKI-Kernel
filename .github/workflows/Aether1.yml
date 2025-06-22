@@ -36,7 +36,7 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-dev
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
-          rm -rf sus/.git  # HAPUS embedded .git
+          rm -rf sus/.git
           susfs=sus/kernel_patches
           cp -r $susfs/fs .
           cp -r $susfs/include .
@@ -59,8 +59,13 @@ jobs:
           cd gki/common
           echo "" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
-          sed -i '4d' Makefile
-          echo 'EXTRAVERSION = -Aetherium2.1-Genesis-SukiSUxSUFS' >> Makefile
+
+          # Update or append EXTRAVERSION
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium2.1-Genesis-SukiSUxSUSFS/' Makefile
+          else
+            echo 'EXTRAVERSION = -Aetherium2.1-Genesis-SukiSUxSUSFS' >> Makefile
+          fi
 
       - name: Append CONFIG_HZ_300 and CONFIG_HZ=300 to defconfig
         run: |
