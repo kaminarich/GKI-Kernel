@@ -1,4 +1,4 @@
-name: Build GKI Aetherium2.1
+name: Build GKI Aetherium2.2
 
 on:
   workflow_dispatch:
