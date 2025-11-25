@@ -1,0 +1,115 @@
+name: Build Kernel Image Only
+
+on:
+  workflow_dispatch:
+    inputs:
+      KERNEL_REPO:
+        description: 'Link Repository Kernel'
+        required: true
+        default: 'https://github.com/username/repo-kernel-kamu'
+      KERNEL_BRANCH:
+        description: 'Branch Kernel'
+        required: true
+        default: 'main'
+      KERNEL_DEFCONFIG:
+        description: 'Nama Defconfig'
+        required: true
+        default: 'vendor/nama_defconfig'
+      KSU_VARIANT:
+        description: 'KernelSU Variant'
+        required: true
+        default: 'Suki'
+        type: choice
+        options:
+        - Next
+        - Suki
+        - None
+      ENABLE_SUSFS:
+        description: 'Pasang SuSFS?'
+        required: true
+        default: 'true'
+        type: boolean
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      actions: write
+
+    steps:
+    - name: Checkout
+      uses: actions/checkout@v4
+
+    - name: Cleanup & Install Deps
+      run: |
+        # Hapus android tools bawaan agar lega
+        sudo rm -rf /usr/local/lib/android
+        # Install dependencies
+        sudo apt-get update
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python3-pip aria2 jq
+
+    - name: Compile Kernel
+      run: |
+        # --- VARIABLE ---
+        export KERNEL_REPO="${{ inputs.KERNEL_REPO }}"
+        export KERNEL_BRANCH="${{ inputs.KERNEL_BRANCH }}"
+        export KERNEL_DEFCONFIG="${{ inputs.KERNEL_DEFCONFIG }}"
+        export KSU="${{ inputs.KSU_VARIANT }}"
+        export KSU_SUSFS="${{ inputs.ENABLE_SUSFS }}"
+        
+        WORKDIR=$(pwd)
+        mkdir -p $WORKDIR/out
+
+        # 1. Download Clang (ZyCromerZ 17)
+        git clone --depth=1 -q "https://github.com/ZyCromerZ/Clang" -b "17" clang
+        export PATH="$WORKDIR/clang/bin:$PATH"
+
+        # 2. Clone Kernel Source
+        git clone --depth=1 -q "$KERNEL_REPO" -b "$KERNEL_BRANCH" ksrc
+        cd ksrc
+
+        # 3. Setup KernelSU (Opsional)
+        if [[ "$KSU" == "Next" ]]; then
+            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+        elif [[ "$KSU" == "Suki" ]]; then
+            curl -LSs "https://raw.githubusercontent.com/Wildan-Gremory/SukiSU/main/kernel/setup.sh" | bash -s main
+        fi
+
+        # 4. Setup SuSFS (Opsional)
+        if [[ "$KSU_SUSFS" == "true" ]]; then
+            git clone --depth=1 -q -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu ../susfs
+            cp -R ../susfs/kernel_patches/fs/* ./fs/
+            cp -R ../susfs/kernel_patches/include/* ./include/
+        fi
+
+        # 5. Build Process
+        echo "--> Mulai Build..."
+        export KBUILD_BUILD_USER="Aetherium"
+        export KBUILD_BUILD_HOST="GitHub"
+        
+        # Buat Config
+        make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- $KERNEL_DEFCONFIG
+
+        # Enable KSU/SuSFS di Config
+        if [[ "$KSU" != "None" ]]; then $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU; fi
+        if [[ "$KSU_SUSFS" == "true" ]]; then $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU_SUSFS; fi
+
+        # Compile IMAGE only
+        make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- Image
+
+        # Ambil hasilnya
+        if [[ -f out/arch/arm64/boot/Image ]]; then
+            cp out/arch/arm64/boot/Image $WORKDIR/Image
+            echo "✅ Image berhasil dibuat."
+        else
+            echo "❌ Gagal membuat file Image."
+            exit 1
+        fi
+
+    - name: Upload Image
+      uses: actions/upload-artifact@v4
+      with:
+        name: Image-Aetherium
+        path: Image
+        
