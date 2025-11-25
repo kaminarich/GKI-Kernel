@@ -1,0 +1,108 @@
+name: Build GKI Aetherium2.1
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    name: Build Kernel
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Setup git identity
+        run: |
+          git config --global user.name "kaminari"
+          git config --global user.email "itawanri14@gmail.com"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update && sudo apt upgrade -y
+          sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+
+      - name: Create and Init GKI Source (Shallow)
+        run: |
+          mkdir gki && cd gki
+          # Added --depth=1 to reduce download size significantly
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      - name: Delete Line 2 in build.config.gki
+        run: |
+          sed -i '2d' gki/common/build.config.gki
+
+      - name: Apply SukiSU Patch
+        run: |
+          cd gki/common
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-dev
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+          rm -rf sus/.git
+          susfs=sus/kernel_patches
+          cp -r $susfs/fs .
+          cp -r $susfs/include .
+          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+
+      - name: Fix KernelSU and sus directory state
+        run: |
+          cd gki/common
+          rm -rf KernelSU/.git || true
+          rm -rf sus/.git || true
+          git rm --cached KernelSU || true
+          git rm --cached sus || true
+          git add KernelSU
+          git add sus
+          git commit -m "Fix KernelSU & sus state after setup.sh injection" || true
+
+      - name: Set Kernel EXTRAVERSION
+        run: |
+          cd gki/common
+          echo "" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+
+          # Update or append EXTRAVERSION
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium2.1-Genesis-SukiSUxSUSFS/' Makefile
+          else
+            echo 'EXTRAVERSION = -Aetherium2.1-Genesis-SukiSUxSUSFS' >> Makefile
+          fi
+
+      - name: Append CONFIG_HZ_300 to defconfig
+        run: |
+          echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
+
+      - name: Final Clean Tree Commit
+        run: |
+          cd gki/common
+          git add .
+          git commit -m "Final clean tree before build" || true
+
+      - name: Build Kernel
+        run: |
+          cd gki
+          # LTO=thin is crucial for disk space, do not change to full
+          LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+
+      - name: Upload Image to PixelDrain
+        # This will run even if the build fails, so you can debug logs if needed
+        if: always() 
+        run: |
+          if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
+            curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
+              -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
+              https://pixeldrain.com/api/file
+          else
+            echo "Image file not found. Build likely failed."
+          fi
