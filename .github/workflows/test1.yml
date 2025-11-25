@@ -47,8 +47,9 @@ jobs:
         sudo rm -rf /usr/local/lib/android
         
         # Install dependencies (Updated for Ubuntu 24.04 Noble)
+        # Ditambah: clang, lld, llvm, gcc-aarch64-linux-gnu (Pengganti download manual)
         sudo apt-get update
-        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libx11-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python3-pip aria2 jq libncurses-dev
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libx11-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python3-pip aria2 jq libncurses-dev clang lld llvm gcc-aarch64-linux-gnu
 
     - name: Compile Kernel
       run: |
@@ -63,20 +64,14 @@ jobs:
         WORKDIR=$(pwd)
         mkdir -p $WORKDIR/out
 
-        # 1. Download Clang (ZyCromerZ 17)
-        echo "⬇️ Downloading Clang..."
-        git clone --depth=1 -q "https://github.com/ZyCromerZ/Clang" -b "17" clang
-        export PATH="$WORKDIR/clang/bin:$PATH"
-
-        # 2. Clone Kernel Source
+        # 1. Clone Kernel Source
         echo "⬇️ Cloning Kernel Source ($KERNEL_BRANCH)..."
         git clone --depth=1 -q "$KERNEL_REPO" -b "$KERNEL_BRANCH" ksrc
         cd ksrc
 
-        # 3. Setup KernelSU (Opsional)
+        # 2. Setup KernelSU (Opsional)
         if [[ "$KSU" != "None" ]]; then
             echo "⚡ Setting up KernelSU: $KSU"
-            # Bersihkan folder KSU lama jika ada
             rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU
             
             if [[ "$KSU" == "Next" ]]; then
@@ -86,7 +81,7 @@ jobs:
             fi
         fi
 
-        # 4. Setup SuSFS (Opsional)
+        # 3. Setup SuSFS (Opsional)
         if [[ "$KSU_SUSFS" == "true" ]]; then
             echo "🛡️ Setting up SuSFS..."
             git clone --depth=1 -q -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu ../susfs
@@ -95,19 +90,22 @@ jobs:
             cp -R ../susfs/kernel_patches/include/* ./include/
         fi
 
-        # 5. Build Process
-        echo "🔨 Starting Build..."
+        # 4. Build Process
+        echo "🔨 Starting Build (using System Clang)..."
         export KBUILD_BUILD_USER="Aetherium"
         export KBUILD_BUILD_HOST="GitHub"
         
+        # Setup Flags untuk System Clang
+        # Tambah KCFLAGS=-Wno-error untuk menghindari stop karena warning compiler baru
+        ARGS="O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- KCFLAGS=-Wno-error"
+
         # Buat Config Awal
-        make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- $KERNEL_DEFCONFIG
+        make -j$(nproc) $ARGS $KERNEL_DEFCONFIG
 
         # --- MODIFIKASI CONFIG (NAMA KERNEL & FITUR) ---
         echo "✍️ Applying Config Tweaks & Name..."
         
         # Masukkan Nama Kernel
-        # Menggunakan -set-str untuk memaksa nama masuk ke .config
         $WORKDIR/ksrc/scripts/config --file out/.config --set-str CONFIG_LOCALVERSION "$KERNEL_NAME"
         
         # Enable KSU di Config
@@ -121,7 +119,7 @@ jobs:
         fi
 
         # Compile IMAGE only
-        make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- Image
+        make -j$(nproc) $ARGS Image
 
         # Ambil hasilnya
         if [[ -f out/arch/arm64/boot/Image ]]; then
