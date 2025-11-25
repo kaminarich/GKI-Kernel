@@ -1,4 +1,4 @@
-name: Build Kernel Image Only
+name: Build GKI Kernel Image
 
 on:
   workflow_dispatch:
@@ -6,15 +6,15 @@ on:
       KERNEL_REPO:
         description: 'Link Repository Kernel'
         required: true
-        default: 'https://github.com/username/repo-kernel-kamu'
+        default: 'https://android.googlesource.com/kernel/common'
       KERNEL_BRANCH:
         description: 'Branch Kernel'
         required: true
-        default: 'main'
+        default: 'android12-5.10'
       KERNEL_DEFCONFIG:
         description: 'Nama Defconfig'
         required: true
-        default: 'vendor/nama_defconfig'
+        default: 'gki_defconfig'
       KSU_VARIANT:
         description: 'KernelSU Variant'
         required: true
@@ -45,13 +45,15 @@ jobs:
       run: |
         # Hapus android tools bawaan agar lega
         sudo rm -rf /usr/local/lib/android
-        # Install dependencies
+        
+        # Install dependencies (Ubuntu 24.04 Fixed)
         sudo apt-get update
-        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 lib32ncurses5-dev libx11-dev lib32z-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python3-pip aria2 jq
+        sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libx11-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python3-pip aria2 jq libncurses-dev
 
     - name: Compile Kernel
       run: |
         # --- VARIABLE ---
+        export KERNEL_NAME="-Aetherium💠2.4-Genesis"
         export KERNEL_REPO="${{ inputs.KERNEL_REPO }}"
         export KERNEL_BRANCH="${{ inputs.KERNEL_BRANCH }}"
         export KERNEL_DEFCONFIG="${{ inputs.KERNEL_DEFCONFIG }}"
@@ -62,38 +64,58 @@ jobs:
         mkdir -p $WORKDIR/out
 
         # 1. Download Clang (ZyCromerZ 17)
+        echo "⬇️ Downloading Clang..."
         git clone --depth=1 -q "https://github.com/ZyCromerZ/Clang" -b "17" clang
         export PATH="$WORKDIR/clang/bin:$PATH"
 
         # 2. Clone Kernel Source
+        echo "⬇️ Cloning Kernel Source ($KERNEL_BRANCH)..."
         git clone --depth=1 -q "$KERNEL_REPO" -b "$KERNEL_BRANCH" ksrc
         cd ksrc
 
         # 3. Setup KernelSU (Opsional)
-        if [[ "$KSU" == "Next" ]]; then
-            curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
-        elif [[ "$KSU" == "Suki" ]]; then
-            curl -LSs "https://raw.githubusercontent.com/Wildan-Gremory/SukiSU/main/kernel/setup.sh" | bash -s main
+        if [[ "$KSU" != "None" ]]; then
+            echo "⚡ Setting up KernelSU: $KSU"
+            rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU
+            
+            if [[ "$KSU" == "Next" ]]; then
+                curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+            elif [[ "$KSU" == "Suki" ]]; then
+                curl -LSs "https://raw.githubusercontent.com/Wildan-Gremory/SukiSU/main/kernel/setup.sh" | bash -s main
+            fi
         fi
 
         # 4. Setup SuSFS (Opsional)
         if [[ "$KSU_SUSFS" == "true" ]]; then
+            echo "🛡️ Setting up SuSFS..."
             git clone --depth=1 -q -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu ../susfs
             cp -R ../susfs/kernel_patches/fs/* ./fs/
             cp -R ../susfs/kernel_patches/include/* ./include/
         fi
 
         # 5. Build Process
-        echo "--> Mulai Build..."
+        echo "🔨 Starting Build..."
         export KBUILD_BUILD_USER="Aetherium"
         export KBUILD_BUILD_HOST="GitHub"
         
-        # Buat Config
+        # Buat Config Awal
         make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- $KERNEL_DEFCONFIG
 
-        # Enable KSU/SuSFS di Config
-        if [[ "$KSU" != "None" ]]; then $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU; fi
-        if [[ "$KSU_SUSFS" == "true" ]]; then $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU_SUSFS; fi
+        # --- MODIFIKASI CONFIG (NAMA KERNEL & FITUR) ---
+        echo "✍️ Applying Config Tweaks & Name..."
+        
+        # Masukkan Nama Kernel
+        $WORKDIR/ksrc/scripts/config --file out/.config --set-str CONFIG_LOCALVERSION "$KERNEL_NAME"
+        
+        # Enable KSU
+        if [[ "$KSU" != "None" ]]; then 
+            $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU
+        fi
+        
+        # Enable SuSFS
+        if [[ "$KSU_SUSFS" == "true" ]]; then 
+            $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
+        fi
 
         # Compile IMAGE only
         make -j$(nproc) O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CROSS_COMPILE=aarch64-linux-gnu- Image
@@ -112,4 +134,3 @@ jobs:
       with:
         name: Image-Aetherium
         path: Image
-        
