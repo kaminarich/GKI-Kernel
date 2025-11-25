@@ -46,13 +46,13 @@ jobs:
         # Hapus android tools bawaan agar lega
         sudo rm -rf /usr/local/lib/android
         
-        # Install dependencies (Ubuntu 24.04 Fixed)
+        # Install dependencies (Updated for Ubuntu 24.04 Noble)
         sudo apt-get update
         sudo apt-get install -y git ccache automake flex lzop bison gperf build-essential curl zlib1g-dev g++-multilib libxml2-utils bzip2 libbz2-dev libbz2-1.0 libghc-bzlib-dev squashfs-tools pngcrush schedtool dpkg-dev liblz4-tool make optipng maven libssl-dev pwgen libswitch-perl policycoreutils minicom libxml-sax-base-perl libxml-simple-perl bc libc6-dev-i386 libx11-dev libgl1-mesa-dev xsltproc unzip device-tree-compiler python3 python3-pip aria2 jq libncurses-dev
 
     - name: Compile Kernel
       run: |
-        # --- VARIABLE ---
+        # --- VARIABLE KONFIGURASI ---
         export KERNEL_NAME="-Aetherium💠2.4-Genesis"
         export KERNEL_REPO="${{ inputs.KERNEL_REPO }}"
         export KERNEL_BRANCH="${{ inputs.KERNEL_BRANCH }}"
@@ -76,6 +76,7 @@ jobs:
         # 3. Setup KernelSU (Opsional)
         if [[ "$KSU" != "None" ]]; then
             echo "⚡ Setting up KernelSU: $KSU"
+            # Bersihkan folder KSU lama jika ada
             rm -rf drivers/staging/kernelsu drivers/kernelsu KernelSU
             
             if [[ "$KSU" == "Next" ]]; then
@@ -89,6 +90,7 @@ jobs:
         if [[ "$KSU_SUSFS" == "true" ]]; then
             echo "🛡️ Setting up SuSFS..."
             git clone --depth=1 -q -b gki-android12-5.10 https://gitlab.com/simonpunk/susfs4ksu ../susfs
+            # Copy patch file
             cp -R ../susfs/kernel_patches/fs/* ./fs/
             cp -R ../susfs/kernel_patches/include/* ./include/
         fi
@@ -105,14 +107,15 @@ jobs:
         echo "✍️ Applying Config Tweaks & Name..."
         
         # Masukkan Nama Kernel
+        # Menggunakan -set-str untuk memaksa nama masuk ke .config
         $WORKDIR/ksrc/scripts/config --file out/.config --set-str CONFIG_LOCALVERSION "$KERNEL_NAME"
         
-        # Enable KSU
+        # Enable KSU di Config
         if [[ "$KSU" != "None" ]]; then 
             $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU
         fi
         
-        # Enable SuSFS
+        # Enable SuSFS di Config
         if [[ "$KSU_SUSFS" == "true" ]]; then 
             $WORKDIR/ksrc/scripts/config --file out/.config --enable CONFIG_KSU_SUSFS
         fi
