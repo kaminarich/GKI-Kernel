@@ -1,4 +1,4 @@
-Name: Build GKI Aetherium3.0.1 Suki
+name: Build GKI Aetherium3.0
 
 on:
   workflow_dispatch:
@@ -142,4 +142,3 @@ jobs:
           else
             echo "Image file not found. Build likely failed."
           fi
-          
