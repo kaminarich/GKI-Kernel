@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.0
+name: Build GKI Aetherium3.01 Suki
 
 on:
   workflow_dispatch:
