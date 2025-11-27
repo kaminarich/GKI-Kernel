@@ -45,35 +45,64 @@ jobs:
             echo "Warning: build.config.gki not found, skipping modification."
           fi
 
-      - name: Apply KernelSU-Next & SUSFS
+      - name: Apply KernelSU-Next & SUSFS (ADAPTED FROM QUARTIX)
         run: |
           cd gki/common
           
-          # --- 1. Install KernelSU-Next (Official Script) ---
-          # Kita pakai ini biar dapat versi NEXT (bukan Main)
+          # --- 1. Install KernelSU-Next ---
           echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # --- 2. Manual SUSFS Patching (Metode User) ---
+          # --- 2. Clone SUSFS & WildKernels Patches ---
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
-          # Definisikan variabel path sesuai snippet kamu
-          susfs_patches="sus/kernel_patches"
+          echo "Cloning WildKernels Patches (untuk fix KSU Next)..."
+          git clone --depth=1 https://github.com/WildKernels/kernel_patches.git wk_patches
           
-          # Copy menggunakan cara merge folder ke current dir (.)
-          # Ini lebih aman daripada wildcard (*)
-          cp -r "${susfs_patches}/fs" .
-          cp -r "${susfs_patches}/include" .
+          # --- 3. Patching Sisi KERNEL (fs & include) ---
+          # Copy folder fs dan include (Metode Aman)
+          cp -r sus/kernel_patches/fs/. fs/
+          cp -r sus/kernel_patches/include/. include/
           
-          # Copy file patch
-          cp "${susfs_patches}/50_add_susfs_in_gki-android12-5.10.patch" .
-          
-          # Apply Patch
-          echo "Applying SUSFS Patch..."
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || true
+          # Apply Patch Utama ke Kernel (50_add_susfs...)
+          cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          echo "Applying SUSFS Patch to Kernel..."
+          patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 3. Setup Submodule & Git State ---
+          # --- 4. Patching Sisi KERNELSU-NEXT (PENTING!) ---
+          # Ini yang dilakukan script Quartix: Patch KSU agar support SUSFS
+          
+          if [ -d "KernelSU-Next" ]; then
+             echo "Entering KernelSU-Next for patching..."
+             cd KernelSU-Next
+             
+             # Apply patch 10_enable_susfs... dari repo SUSFS
+             # Note: Path '../sus' karena kita ada di dalam folder KernelSU-Next
+             if [ -f "../sus/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
+                echo "Applying 10_enable_susfs_for_ksu.patch..."
+                patch -p1 < ../sus/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+             fi
+             
+             # Apply Extra Fixes dari WildKernels (jika ada yg cocok versi)
+             # Kita coba apply patch umum fix untuk Next
+             SUSFS_VERSION=$(grep -E '^#define SUSFS_VERSION' ../include/linux/susfs.h | cut -d' ' -f3 | sed 's/"//g')
+             FIX_DIR="../wk_patches/next/susfs_fix_patches/$SUSFS_VERSION"
+             
+             if [ -d "$FIX_DIR" ]; then
+                echo "Applying WildKernels fixes for SUSFS $SUSFS_VERSION..."
+                for p in "$FIX_DIR"/*.patch; do
+                   echo "Applying fix: $(basename $p)"
+                   patch -p1 --fuzz=3 < "$p" || true
+                done
+             else
+                echo "No specific WildKernels fixes found for version $SUSFS_VERSION (might be okay for 5.10)"
+             fi
+             
+             cd ..
+          fi
+
+          # --- 5. Setup Submodule & Git State ---
           
           # Deteksi nama folder
           if [ -d "KernelSU-Next" ]; then
@@ -84,17 +113,16 @@ jobs:
             echo "Error: KernelSU folder not found!"
             exit 1
           fi
-
-          echo "Detected KernelSU directory: $KSU_DIR"
           
-          # Hapus .git milik SUSFS (agar jadi file biasa)
+          # Hapus .git milik SUSFS dan WildKernels (biar jadi file biasa)
           rm -rf sus/.git
+          rm -rf wk_patches
           
-          # Add ke git (KSU_DIR akan otomatis jadi submodule karena .git-nya masih ada)
+          # Add ke git (Biarkan .git KSU_DIR ada agar jadi submodule -> Versi Aman)
           git add $KSU_DIR
           git add sus
           
-          git commit -m "Inject KernelSU-Next (Submodule) & SUSFS (Manual Patch)" || true
+          git commit -m "Inject KernelSU-Next (Submodule) & SUSFS (Quartix Logic)" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
