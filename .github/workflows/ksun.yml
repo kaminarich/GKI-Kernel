@@ -49,25 +49,31 @@ jobs:
         run: |
           cd gki/common
           
-          # --- 1. Install KernelSU-Next (Branch: next) ---
+          # --- 1. Install KernelSU-Next (Official Script) ---
+          # Kita pakai ini biar dapat versi NEXT (bukan Main)
           echo "Installing KernelSU-Next..."
-          # Script setup akan clone repo dan membuat symlink
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # --- 2. Clone SUSFS (Branch: gki-android12-5.10) ---
+          # --- 2. Manual SUSFS Patching (Metode User) ---
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
-          # --- 3. Copy SUSFS Files (Safe Method) ---
-          cp -r sus/kernel_patches/fs/. fs/
-          cp -r sus/kernel_patches/include/. include/
+          # Definisikan variabel path sesuai snippet kamu
+          susfs_patches="sus/kernel_patches"
           
-          # --- 4. Apply SUSFS Patch ---
-          cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          # Copy menggunakan cara merge folder ke current dir (.)
+          # Ini lebih aman daripada wildcard (*)
+          cp -r "${susfs_patches}/fs" .
+          cp -r "${susfs_patches}/include" .
+          
+          # Copy file patch
+          cp "${susfs_patches}/50_add_susfs_in_gki-android12-5.10.patch" .
+          
+          # Apply Patch
           echo "Applying SUSFS Patch..."
-          patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 5. Setup Submodule & Git State (SOLUSI SUBMODULE) ---
+          # --- 3. Setup Submodule & Git State ---
           
           # Deteksi nama folder
           if [ -d "KernelSU-Next" ]; then
@@ -81,19 +87,14 @@ jobs:
 
           echo "Detected KernelSU directory: $KSU_DIR"
           
-          # [PENTING] JANGAN HAPUS .git DI DALAM KERNELSU-NEXT
-          # Biarkan .git ada agar Makefile bisa baca versi (KSU_VERSION_TAG)
-          
-          # Hapus .git milik SUSFS saja (SUSFS jadi file biasa)
+          # Hapus .git milik SUSFS (agar jadi file biasa)
           rm -rf sus/.git
           
-          # Add ke git
-          # Git akan otomatis mendeteksi KSU_DIR sebagai 'embedded repository' (submodule)
+          # Add ke git (KSU_DIR akan otomatis jadi submodule karena .git-nya masih ada)
           git add $KSU_DIR
           git add sus
           
-          # Kita commit agar state-nya bersih
-          git commit -m "Inject KernelSU-Next (as Submodule) & SUSFS" || true
+          git commit -m "Inject KernelSU-Next (Submodule) & SUSFS (Manual Patch)" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -130,12 +131,9 @@ jobs:
           BRAND="-💠Aetherium3.0-Eclipse-KSNSF"
           
           echo "Branding kernel as $BRAND"
-          
-          # 1. Hapus logika versioning bawaan linux
           echo "echo \"$BRAND\"" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
           
-          # 2. Update config
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG"
           echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG"
