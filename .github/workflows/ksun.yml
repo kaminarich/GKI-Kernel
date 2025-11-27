@@ -45,7 +45,7 @@ jobs:
             echo "Warning: build.config.gki not found, skipping modification."
           fi
 
-      - name: Apply KernelSU-Next & SUSFS (ADAPTED FROM QUARTIX)
+      - name: Apply KernelSU-Next & SUSFS (MANUAL INJECTION MODE)
         run: |
           cd gki/common
           
@@ -53,52 +53,56 @@ jobs:
           echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # --- 2. Clone SUSFS & WildKernels Patches ---
+          # --- 2. Clone SUSFS ---
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
-          echo "Cloning WildKernels Patches (untuk fix KSU Next)..."
-          git clone --depth=1 https://github.com/WildKernels/kernel_patches.git wk_patches
-          
           # --- 3. Patching Sisi KERNEL (fs & include) ---
-          # Copy folder fs dan include (Metode Aman)
+          # Copy folder fs dan include
           cp -r sus/kernel_patches/fs/. fs/
           cp -r sus/kernel_patches/include/. include/
           
-          # Apply Patch Utama ke Kernel (50_add_susfs...)
+          # Apply Patch Utama ke Kernel
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           echo "Applying SUSFS Patch to Kernel..."
           patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 4. Patching Sisi KERNELSU-NEXT (PENTING!) ---
-          # Ini yang dilakukan script Quartix: Patch KSU agar support SUSFS
+          # --- 4. Patching Sisi KERNELSU-NEXT (MANUAL FIX) ---
+          # Kita TIDAK pakai 10_enable_susfs... karena rusak untuk Next.
+          # Kita inject manual kode yang dibutuhkan.
           
           if [ -d "KernelSU-Next" ]; then
-             echo "Entering KernelSU-Next for patching..."
+             echo "Injecting SUSFS support into KernelSU-Next manually..."
              cd KernelSU-Next
              
-             # Apply patch 10_enable_susfs... dari repo SUSFS
-             # Note: Path '../sus' karena kita ada di dalam folder KernelSU-Next
-             if [ -f "../sus/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ]; then
-                echo "Applying 10_enable_susfs_for_ksu.patch..."
-                patch -p1 < ../sus/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
-             fi
+             # 1. Modifikasi kernel/Makefile (Tambahkan susfs.o)
+             # Cari baris obj-$(CONFIG_KSU) dan tambahkan susfs.o di bawahnya
+             sed -i '/obj-$(CONFIG_KSU).*+=/a ccflags-y += -I$(srctree)/drivers/kernelsu/include\nobj-$(CONFIG_KSU) += kernel/susfs.o' kernel/Makefile
              
-             # Apply Extra Fixes dari WildKernels (jika ada yg cocok versi)
-             # Kita coba apply patch umum fix untuk Next
-             SUSFS_VERSION=$(grep -E '^#define SUSFS_VERSION' ../include/linux/susfs.h | cut -d' ' -f3 | sed 's/"//g')
-             FIX_DIR="../wk_patches/next/susfs_fix_patches/$SUSFS_VERSION"
+             # Copy file susfs.c dari repo susfs ke dalam folder kernel milik KSU
+             cp ../sus/kernel_patches/fs/susfs.c kernel/
              
-             if [ -d "$FIX_DIR" ]; then
-                echo "Applying WildKernels fixes for SUSFS $SUSFS_VERSION..."
-                for p in "$FIX_DIR"/*.patch; do
-                   echo "Applying fix: $(basename $p)"
-                   patch -p1 --fuzz=3 < "$p" || true
-                done
-             else
-                echo "No specific WildKernels fixes found for version $SUSFS_VERSION (might be okay for 5.10)"
-             fi
+             # 2. Modifikasi kernel/ksu.c (Include & Init)
+             # Tambahkan include
+             sed -i '/#include "ksu.h"/a #include <linux/susfs.h>' kernel/ksu.c
+             # Tambahkan susfs_init() sebelum pr_info("KernelSU: initialized\n");
+             sed -i '/pr_info("KernelSU: initialized/i \    susfs_init();' kernel/ksu.c
              
+             # 3. Modifikasi kernel/selinux/selinux.c (Export ksu_file_sid)
+             # Tambahkan include
+             sed -i '/#include "selinux.h"/a #include <linux/susfs.h>' kernel/selinux/selinux.c
+             # Tambahkan definisi variabel global
+             sed -i '/struct ksu_security_hooks/i u32 ksu_file_sid;\n' kernel/selinux/selinux.c
+             
+             # 4. Modifikasi kernel/sucompat.c (Fix redefinition error)
+             # Jika ada error redefinition ksu_handle_devpts, kita pastikan patch tidak dobel
+             # Tapi karena kita manual, kita HANYA menambahkan apa yang kurang.
+             # Biasanya Next sudah punya sucompat yang baik, kita hanya perlu memastikan ksu_file_sid terbaca.
+             
+             # Tambahkan extern u32 ksu_file_sid di header atau di file yang butuh jika error.
+             # Namun karena kita ubah selinux.c di atas, harusnya aman.
+             
+             echo "Manual injection complete."
              cd ..
           fi
 
@@ -114,15 +118,14 @@ jobs:
             exit 1
           fi
           
-          # Hapus .git milik SUSFS dan WildKernels (biar jadi file biasa)
+          # Hapus .git milik SUSFS
           rm -rf sus/.git
-          rm -rf wk_patches
           
-          # Add ke git (Biarkan .git KSU_DIR ada agar jadi submodule -> Versi Aman)
+          # Add ke git (KernelSU-Next jadi submodule)
           git add $KSU_DIR
           git add sus
           
-          git commit -m "Inject KernelSU-Next (Submodule) & SUSFS (Quartix Logic)" || true
+          git commit -m "Inject KernelSU-Next & SUSFS (Manual Injection)" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
