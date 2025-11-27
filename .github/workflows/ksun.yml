@@ -39,50 +39,44 @@ jobs:
 
       - name: Delete Line 2 in build.config.gki
         run: |
-          # Pastikan file ada sebelum sed
           if [ -f gki/common/build.config.gki ]; then
             sed -i '2d' gki/common/build.config.gki
           else
-            echo "Warning: build.config.gki not found!"
+            echo "Warning: build.config.gki not found, skipping modification."
           fi
 
       - name: Apply KernelSU-Next & SUSFS
         run: |
           cd gki/common
           
-          # 1. Install KernelSU-Next (Branch: next)
+          # --- 1. Install KernelSU-Next (Branch: next) ---
           echo "Installing KernelSU-Next..."
+          # Script ini akan otomatis clone repo KernelSU-Next ke folder 'KernelSU' dan patch kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # 2. Clone SUSFS (Branch: gki-android12-5.10)
+          # --- 2. Clone SUSFS (Branch: gki-android12-5.10) ---
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
-          # 3. Copy SUSFS Files
-          # Mengcopy folder fs dan include ke root kernel
+          # --- 3. Copy SUSFS Files ---
+          # Copy isi folder (/*) agar strukturnya masuk ke fs/ dan include/ kernel
           cp -r sus/kernel_patches/fs/* fs/
           cp -r sus/kernel_patches/include/* include/
           
-          # 4. Apply SUSFS Patch
+          # --- 4. Apply SUSFS Patch ---
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           echo "Applying SUSFS Patch..."
+          # Gunakan fuzz 3 untuk toleransi baris yang bergeser
           patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-      - name: Fix KernelSU and sus directory state
-        run: |
-          cd gki/common
-          # Hapus folder .git agar tidak dianggap sebagai submodule
+          # --- 5. Fix Git State (SOLUSI ERROR 128) ---
+          # Hapus folder .git di dalam submodule agar menjadi folder biasa
           rm -rf KernelSU/.git
           rm -rf sus/.git
           
-          # Hapus dari index git jika sudah terlanjur masuk (agar tidak error)
-          git rm --cached --ignore-unmatch -r KernelSU || true
-          git rm --cached --ignore-unmatch -r sus || true
-          
-          # Tambahkan kembali sebagai file biasa
-          git add KernelSU
-          git add sus
-          git commit -m "Inject KernelSU-Next & SUSFS manually" || true
+          # Langsung add ke git (tanpa git rm --cached karena file ini baru)
+          git add KernelSU sus
+          git commit -m "Inject KernelSU-Next & SUSFS" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -90,10 +84,8 @@ jobs:
           # Download patch dari commit GitHub
           curl -L https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch > custom_cherrypick.patch
           
-          # Apply patch
+          # Apply patch dengan toleransi kegagalan (agar build tetap lanjut)
           echo "Applying custom cherry-pick..."
-          # Menggunakan git apply dengan opsi reject agar build tidak langsung gagal jika konflik minor
-          git apply -v --check custom_cherrypick.patch || echo "Patch check failed, trying forceful apply..."
           git apply -v custom_cherrypick.patch || echo "Cherry-pick failed but continuing..."
           
           # Bersihkan dan commit
@@ -103,7 +95,6 @@ jobs:
 
       - name: Add Custom Network & FS Configs
         run: |
-          # Set path ke file config
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           
           echo "Injecting custom configs to $DEFCONFIG"
@@ -123,11 +114,13 @@ jobs:
       - name: Set Kernel EXTRAVERSION
         run: |
           cd gki/common
-          # Modifikasi Makefile untuk nama kernel
-          if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU/' Makefile
-          else
-            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU' >> Makefile
+          # Pastikan Makefile ada sebelum diubah
+          if [ -f Makefile ]; then
+             if grep -q '^EXTRAVERSION *=' Makefile; then
+               sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU/' Makefile
+             else
+               echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU' >> Makefile
+             fi
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
@@ -143,7 +136,6 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          # Build command standard GKI
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
