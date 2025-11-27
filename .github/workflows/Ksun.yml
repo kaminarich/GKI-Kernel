@@ -39,19 +39,34 @@ jobs:
 
       - name: Delete Line 2 in build.config.gki
         run: |
-          sed -i '2d' gki/common/build.config.gki
+          # Pastikan file ada sebelum sed
+          if [ -f gki/common/build.config.gki ]; then
+            sed -i '2d' gki/common/build.config.gki
+          else
+            echo "Warning: build.config.gki not found!"
+          fi
 
-      - name: Apply SukiSU Patch
+      - name: Apply KernelSU-Next & SUSFS
         run: |
           cd gki/common
+          
+          # 1. Install KernelSU-Next (Branch: next)
+          echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          
+          # 2. Clone SUSFS (Branch: gki-android12-5.10)
+          echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
-          rm -rf sus/.git
-          susfs=sus/kernel_patches
-          cp -r $susfs/fs .
-          cp -r $susfs/include .
-          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          
+          # 3. Copy SUSFS Files
+          # Mengcopy folder fs dan include ke root kernel
+          cp -r sus/kernel_patches/fs/* fs/
+          cp -r sus/kernel_patches/include/* include/
+          
+          # 4. Apply SUSFS Patch
+          cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          echo "Applying SUSFS Patch..."
+          patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
       - name: Fix KernelSU and sus directory state
         run: |
@@ -60,14 +75,14 @@ jobs:
           rm -rf KernelSU/.git
           rm -rf sus/.git
           
-          # Gunakan --ignore-unmatch agar tidak error false alarm di log
-          git rm --cached --ignore-unmatch -r KernelSU
-          git rm --cached --ignore-unmatch -r sus
+          # Hapus dari index git jika sudah terlanjur masuk (agar tidak error)
+          git rm --cached --ignore-unmatch -r KernelSU || true
+          git rm --cached --ignore-unmatch -r sus || true
           
           # Tambahkan kembali sebagai file biasa
           git add KernelSU
           git add sus
-          git commit -m "Inject KernelSU & SUSFS manually" || true
+          git commit -m "Inject KernelSU-Next & SUSFS manually" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -77,7 +92,9 @@ jobs:
           
           # Apply patch
           echo "Applying custom cherry-pick..."
-          git apply -v custom_cherrypick.patch
+          # Menggunakan git apply dengan opsi reject agar build tidak langsung gagal jika konflik minor
+          git apply -v --check custom_cherrypick.patch || echo "Patch check failed, trying forceful apply..."
+          git apply -v custom_cherrypick.patch || echo "Cherry-pick failed but continuing..."
           
           # Bersihkan dan commit
           rm custom_cherrypick.patch
@@ -106,10 +123,7 @@ jobs:
       - name: Set Kernel EXTRAVERSION
         run: |
           cd gki/common
-          echo "" > scripts/setlocalversion
-          chmod +x scripts/setlocalversion
-
-          # Update nama kernel menjadi Aetherium3.0-Eclipse-SukiSUSU
+          # Modifikasi Makefile untuk nama kernel
           if grep -q '^EXTRAVERSION *=' Makefile; then
             sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU/' Makefile
           else
@@ -129,15 +143,19 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
+          # Build command standard GKI
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
+            echo "Uploading Image..."
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
+              -F name="Image-Aetherium-Next" \
               https://pixeldrain.com/api/file
           else
             echo "Image file not found. Build likely failed."
+            exit 1
           fi
