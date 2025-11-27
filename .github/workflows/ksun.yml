@@ -57,8 +57,7 @@ jobs:
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
-          # --- 3. Copy SUSFS Files (TANPA BINTANG / SAFE METHOD) ---
-          # Menggunakan /. untuk menyalin seluruh isi folder termasuk hidden files (jika ada)
+          # --- 3. Copy SUSFS Files (Metode Aman) ---
           cp -r sus/kernel_patches/fs/. fs/
           cp -r sus/kernel_patches/include/. include/
           
@@ -67,8 +66,9 @@ jobs:
           echo "Applying SUSFS Patch..."
           patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 5. Fix Git State (AUTO DETECT) ---
-          # Deteksi nama folder KernelSU yang terbentuk
+          # --- 5. Fix KernelSU Version & Git State (FIX ERROR DISINI) ---
+          
+          # Deteksi folder KernelSU
           if [ -d "KernelSU-Next" ]; then
             KSU_DIR="KernelSU-Next"
           elif [ -d "KernelSU" ]; then
@@ -77,16 +77,31 @@ jobs:
             echo "Error: KernelSU folder not found!"
             exit 1
           fi
-          
-          echo "Detected KernelSU directory: $KSU_DIR"
 
-          # Hapus folder .git agar tidak dianggap submodule
+          echo "Detected KernelSU directory: $KSU_DIR"
+          
+          # [PENTING] Ambil versi DULU sebelum hapus .git
+          cd $KSU_DIR
+          # Ambil hash commit pendek (misal: a1b2c3d)
+          KSU_GIT_VERSION=$(git rev-parse --short HEAD)
+          # Hitung jumlah commit untuk version code (10000 + jumlah commit)
+          KSU_VERSION=$((10000 + $(git rev-list --count HEAD)))
+          echo "KSU Version captured: $KSU_VERSION ($KSU_GIT_VERSION)"
+          cd ..
+
+          # Hapus folder .git (agar bersih dari submodule)
           rm -rf $KSU_DIR/.git
           rm -rf sus/.git
           
-          # Add folder ke git
-          git add $KSU_DIR sus
-          git commit -m "Inject KernelSU-Next & SUSFS" || true
+          # [PENTING] Tulis versi manual ke Makefile agar build tidak error
+          # Kita sisipkan variabel ini di baris paling atas drivers/kernelsu/Makefile
+          KSU_MAKEFILE="drivers/kernelsu/Makefile"
+          sed -i "1iKSU_GIT_VERSION := $KSU_GIT_VERSION" $KSU_MAKEFILE
+          sed -i "1iKSU_VERSION := $KSU_VERSION" $KSU_MAKEFILE
+          
+          # Add ke git GKI utama
+          git add $KSU_DIR sus drivers/kernelsu
+          git commit -m "Inject KernelSU-Next & SUSFS (Version Fixed)" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -124,7 +139,7 @@ jobs:
           
           echo "Branding kernel as $BRAND"
           
-          # 1. Hapus logika versioning bawaan linux (menghilangkan tanda + atau -dirty)
+          # 1. Hapus logika versioning bawaan linux
           echo "echo \"$BRAND\"" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
           
