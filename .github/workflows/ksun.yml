@@ -51,7 +51,6 @@ jobs:
           
           # --- 1. Install KernelSU-Next (Branch: next) ---
           echo "Installing KernelSU-Next..."
-          # Script ini akan otomatis clone repo KernelSU-Next ke folder 'KernelSU' dan patch kernel
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
           # --- 2. Clone SUSFS (Branch: gki-android12-5.10) ---
@@ -69,13 +68,29 @@ jobs:
           # Gunakan fuzz 3 untuk toleransi baris yang bergeser
           patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 5. Fix Git State (SOLUSI ERROR 128) ---
+          # --- 5. Fix Git State (AUTO DETECT FOLDER NAME) ---
+          
+          # Deteksi nama folder KernelSU yang terbentuk (KernelSU-Next atau KernelSU)
+          if [ -d "KernelSU-Next" ]; then
+            KSU_DIR="KernelSU-Next"
+          elif [ -d "KernelSU" ]; then
+            KSU_DIR="KernelSU"
+          else
+            echo "Error: KernelSU folder not found!"
+            ls -d *
+            exit 1
+          fi
+          
+          echo "Detected KernelSU directory: $KSU_DIR"
+
           # Hapus folder .git di dalam submodule agar menjadi folder biasa
-          rm -rf KernelSU/.git
+          rm -rf $KSU_DIR/.git
           rm -rf sus/.git
           
-          # Langsung add ke git (tanpa git rm --cached karena file ini baru)
-          git add KernelSU sus
+          # Add ke git
+          git add $KSU_DIR
+          git add sus
+          
           git commit -m "Inject KernelSU-Next & SUSFS" || true
 
       - name: Apply Cherry-pick from Pzqqt
