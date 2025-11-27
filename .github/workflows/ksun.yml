@@ -39,73 +39,70 @@ jobs:
 
       - name: Delete Line 2 in build.config.gki
         run: |
-          # Pastikan file ada sebelum sed
           if [ -f gki/common/build.config.gki ]; then
             sed -i '2d' gki/common/build.config.gki
           else
-            echo "Warning: build.config.gki not found!"
+            echo "Warning: build.config.gki not found, skipping modification."
           fi
 
       - name: Apply KernelSU-Next & SUSFS
         run: |
           cd gki/common
           
-          # 1. Install KernelSU-Next (Branch: next)
+          # --- 1. Install KernelSU-Next (Branch: next) ---
           echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # 2. Clone SUSFS (Branch: gki-android12-5.10)
+          # --- 2. Clone SUSFS (Branch: gki-android12-5.10) ---
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
-          # 3. Copy SUSFS Files
-          # Mengcopy folder fs dan include ke root kernel
-          cp -r sus/kernel_patches/fs/* fs/
-          cp -r sus/kernel_patches/include/* include/
+          # --- 3. Copy SUSFS Files (TANPA BINTANG / SAFE METHOD) ---
+          # Menggunakan /. untuk menyalin seluruh isi folder termasuk hidden files (jika ada)
+          cp -r sus/kernel_patches/fs/. fs/
+          cp -r sus/kernel_patches/include/. include/
           
-          # 4. Apply SUSFS Patch
+          # --- 4. Apply SUSFS Patch ---
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           echo "Applying SUSFS Patch..."
           patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-      - name: Fix KernelSU and sus directory state
-        run: |
-          cd gki/common
-          # Hapus folder .git agar tidak dianggap sebagai submodule
-          rm -rf KernelSU/.git
+          # --- 5. Fix Git State (AUTO DETECT) ---
+          # Deteksi nama folder KernelSU yang terbentuk
+          if [ -d "KernelSU-Next" ]; then
+            KSU_DIR="KernelSU-Next"
+          elif [ -d "KernelSU" ]; then
+            KSU_DIR="KernelSU"
+          else
+            echo "Error: KernelSU folder not found!"
+            exit 1
+          fi
+          
+          echo "Detected KernelSU directory: $KSU_DIR"
+
+          # Hapus folder .git agar tidak dianggap submodule
+          rm -rf $KSU_DIR/.git
           rm -rf sus/.git
           
-          # Hapus dari index git jika sudah terlanjur masuk (agar tidak error)
-          git rm --cached --ignore-unmatch -r KernelSU || true
-          git rm --cached --ignore-unmatch -r sus || true
-          
-          # Tambahkan kembali sebagai file biasa
-          git add KernelSU
-          git add sus
-          git commit -m "Inject KernelSU-Next & SUSFS manually" || true
+          # Add folder ke git
+          git add $KSU_DIR sus
+          git commit -m "Inject KernelSU-Next & SUSFS" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
           cd gki/common
-          # Download patch dari commit GitHub
           curl -L https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch > custom_cherrypick.patch
           
-          # Apply patch
           echo "Applying custom cherry-pick..."
-          # Menggunakan git apply dengan opsi reject agar build tidak langsung gagal jika konflik minor
-          git apply -v --check custom_cherrypick.patch || echo "Patch check failed, trying forceful apply..."
           git apply -v custom_cherrypick.patch || echo "Cherry-pick failed but continuing..."
           
-          # Bersihkan dan commit
           rm custom_cherrypick.patch
           git add .
           git commit -m "Apply cherry-pick: 477706c" || true
 
       - name: Add Custom Network & FS Configs
         run: |
-          # Set path ke file config
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
-          
           echo "Injecting custom configs to $DEFCONFIG"
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
@@ -120,15 +117,22 @@ jobs:
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
 
-      - name: Set Kernel EXTRAVERSION
+      - name: Set Kernel Name and Branding (CLEAN)
         run: |
           cd gki/common
-          # Modifikasi Makefile untuk nama kernel
-          if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU/' Makefile
-          else
-            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU' >> Makefile
-          fi
+          BRAND="-💠Aetherium3.0-Eclipse-KSNSF"
+          
+          echo "Branding kernel as $BRAND"
+          
+          # 1. Hapus logika versioning bawaan linux (menghilangkan tanda + atau -dirty)
+          echo "echo \"$BRAND\"" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          
+          # 2. Update config
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG"
+          echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG"
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG"
 
       - name: Append CONFIG_HZ_300 to defconfig
         run: |
@@ -143,7 +147,6 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          # Build command standard GKI
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
