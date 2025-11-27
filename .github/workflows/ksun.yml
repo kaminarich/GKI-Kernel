@@ -58,19 +58,16 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           
           # --- 3. Copy SUSFS Files ---
-          # Copy isi folder (/*) agar strukturnya masuk ke fs/ dan include/ kernel
           cp -r sus/kernel_patches/fs/* fs/
           cp -r sus/kernel_patches/include/* include/
           
           # --- 4. Apply SUSFS Patch ---
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           echo "Applying SUSFS Patch..."
-          # Gunakan fuzz 3 untuk toleransi baris yang bergeser
           patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 5. Fix Git State (AUTO DETECT FOLDER NAME) ---
-          
-          # Deteksi nama folder KernelSU yang terbentuk (KernelSU-Next atau KernelSU)
+          # --- 5. Fix Git State (AUTO DETECT) ---
+          # Deteksi nama folder KernelSU
           if [ -d "KernelSU-Next" ]; then
             KSU_DIR="KernelSU-Next"
           elif [ -d "KernelSU" ]; then
@@ -82,28 +79,20 @@ jobs:
           fi
           
           echo "Detected KernelSU directory: $KSU_DIR"
-
-          # Hapus folder .git di dalam submodule agar menjadi folder biasa
           rm -rf $KSU_DIR/.git
           rm -rf sus/.git
           
-          # Add ke git
-          git add $KSU_DIR
-          git add sus
-          
+          git add $KSU_DIR sus
           git commit -m "Inject KernelSU-Next & SUSFS" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
           cd gki/common
-          # Download patch dari commit GitHub
           curl -L https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch > custom_cherrypick.patch
           
-          # Apply patch dengan toleransi kegagalan (agar build tetap lanjut)
           echo "Applying custom cherry-pick..."
           git apply -v custom_cherrypick.patch || echo "Cherry-pick failed but continuing..."
           
-          # Bersihkan dan commit
           rm custom_cherrypick.patch
           git add .
           git commit -m "Apply cherry-pick: 477706c" || true
@@ -111,7 +100,6 @@ jobs:
       - name: Add Custom Network & FS Configs
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
-          
           echo "Injecting custom configs to $DEFCONFIG"
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
@@ -126,17 +114,24 @@ jobs:
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
 
-      - name: Set Kernel EXTRAVERSION
+      - name: Set Kernel Name and Branding (CLEAN)
         run: |
           cd gki/common
-          # Pastikan Makefile ada sebelum diubah
-          if [ -f Makefile ]; then
-             if grep -q '^EXTRAVERSION *=' Makefile; then
-               sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU/' Makefile
-             else
-               echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU' >> Makefile
-             fi
-          fi
+          # Ganti nama di sini sesuai keinginan
+          BRAND="-💠Aetherium3.0-Eclipse-KSNSF"
+          
+          echo "Branding kernel as $BRAND"
+          
+          # 1. Hapus logika versioning bawaan linux (menghilangkan tanda + atau -dirty)
+          # Kita timpa script setlocalversion agar isinya cuma "echo $BRAND"
+          echo "echo \"$BRAND\"" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          
+          # 2. Pastikan config juga menggunakan brand ini
+          DEFCONFIG="arch/arm64/configs/gki_defconfig"
+          sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG"
+          echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG"
+          echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG"
 
       - name: Append CONFIG_HZ_300 to defconfig
         run: |
@@ -158,6 +153,7 @@ jobs:
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
             echo "Uploading Image..."
+            # Nama file di pixeldrain nanti akan bersih sesuai settingan
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               -F name="Image-Aetherium-Next" \
