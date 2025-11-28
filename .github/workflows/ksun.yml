@@ -45,7 +45,7 @@ jobs:
             echo "Warning: build.config.gki not found, skipping modification."
           fi
 
-      - name: Apply KernelSU-Next & SUSFS (MANUAL INJECTION FOR NEXT)
+      - name: Apply KernelSU-Next & SUSFS (Branch: gki-android12-5.10)
         run: |
           cd gki/common
           
@@ -53,59 +53,55 @@ jobs:
           echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # --- 2. Clone SUSFS (Sesuai instruksi: Branch android12-5.10) ---
+          # --- 2. Clone SUSFS (UPDATED BRANCH: gki-android12-5.10) ---
           echo "Cloning SUSFS..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b android12-5.10 sus
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           
-          # --- 3. Implementasi Instruksi README (Sisi Kernel) ---
+          # --- 3. Patching Sisi KERNEL (fs & include) ---
+          # Copy folder fs dan include
+          cp -r sus/kernel_patches/fs/. fs/
+          cp -r sus/kernel_patches/include/. include/
           
-          # "Run cp ./kernel_patches/fs/susfs.c $KERNEL_ROOT/fs/"
-          cp sus/kernel_patches/fs/susfs.c fs/
+          # Apply Patch Utama ke Kernel
+          # Nama file biasanya: 50_add_susfs_in_gki-android12-5.10.patch
+          # Kita gunakan wildcard agar tidak salah ketik
+          cp sus/kernel_patches/50_add_susfs_in_gki-*.patch .
+          PATCH_FILE=$(ls 50_add_susfs_in_gki-*.patch | head -n 1)
           
-          # "Run cp ./kernel_patches/include/linux/susfs.h $KERNEL_ROOT/include/linux/"
-          cp sus/kernel_patches/include/linux/susfs.h include/linux/
-          
-          # "Run cd $KERNEL_ROOT and then patch -p1 < 50_add_susfs_in_kernel.patch"
-          # Kita cari file patchnya (karena namanya kadang ada versi kernelnya)
-          PATCH_FILE=$(find sus/kernel_patches -name "50_add_susfs_in_kernel-*.patch" | head -n 1)
-          cp "$PATCH_FILE" .
-          echo "Applying Kernel-side Patch: $(basename $PATCH_FILE)"
-          patch -p1 --fuzz=3 < "$(basename $PATCH_FILE)" || true
+          echo "Applying SUSFS Patch to Kernel: $PATCH_FILE"
+          patch -p1 --fuzz=3 < "$PATCH_FILE" || true
 
-          # --- 4. Implementasi Instruksi README (Sisi KernelSU) - MANUAL MODE ---
-          # PENTING: Kita TIDAK pakai '10_enable_susfs_for_ksu.patch' karena itu untuk KSU Original.
-          # Kita inject manual kodenya agar kompatibel dengan KSU-Next.
+          # --- 4. Patching Sisi KERNELSU-NEXT (MANUAL INJECTION FIX) ---
+          # Ini memperbaiki error 'ksu_file_sid undeclared' yang kamu alami sebelumnya
           
           if [ -d "KernelSU-Next" ]; then
-             echo "Injecting SUSFS into KernelSU-Next manually..."
+             echo "Injecting SUSFS support into KernelSU-Next manually..."
              cd KernelSU-Next
              
-             # A. Modifikasi Makefile (Agar susfs.c ikut di-compile)
-             # Menambahkan: obj-$(CONFIG_KSU) += kernel/susfs.o
+             # A. Modifikasi kernel/Makefile (Tambahkan susfs.o)
              sed -i '/obj-$(CONFIG_KSU).*+=/a ccflags-y += -I$(srctree)/drivers/kernelsu/include\nobj-$(CONFIG_KSU) += kernel/susfs.o' kernel/Makefile
              
-             # Copy susfs.c ke folder kernel milik KSU juga (sebagai backup/referensi build)
+             # B. Copy file susfs.c ke dalam folder KSU
              cp ../sus/kernel_patches/fs/susfs.c kernel/
              
-             # B. Modifikasi ksu.c (Init SUSFS saat boot)
+             # C. Modifikasi kernel/ksu.c (Include & Init)
              sed -i '/#include "ksu.h"/a #include <linux/susfs.h>' kernel/ksu.c
              sed -i '/pr_info("KernelSU: initialized/i \    susfs_init();' kernel/ksu.c
              
-             # C. Modifikasi selinux.c (Definisikan variabel ksu_file_sid)
+             # D. Modifikasi kernel/selinux/selinux.c (Definisi ksu_file_sid)
              sed -i '/#include "selinux.h"/a #include <linux/susfs.h>' kernel/selinux/selinux.c
-             # Masukkan "u32 ksu_file_sid;" sebelum struct ksu_security_hooks
+             # Tambahkan "u32 ksu_file_sid;" sebelum struct ksu_security_hooks
              sed -i '/struct ksu_security_hooks/i u32 ksu_file_sid;\n' kernel/selinux/selinux.c
              
-             # D. [FIX UTAMA] Modifikasi sucompat.c
-             # Error log kamu sebelumnya: "undeclared identifier ksu_file_sid" di sucompat.c
-             # Solusi: Kita tambahkan "extern u32 ksu_file_sid;" di file ini.
+             # E. [CRITICAL FIX] Modifikasi kernel/sucompat.c (Extern ksu_file_sid)
+             # Tambahkan "extern u32 ksu_file_sid;" agar sucompat.c bisa membaca variabel dari selinux.c
              sed -i '/#include "sucompat.h"/a extern u32 ksu_file_sid;' kernel/sucompat.c
              
-             echo "Manual injection complete. Ready for build."
+             echo "Manual injection complete."
              cd ..
           fi
 
-          # --- 5. Setup Submodule (Agar Versi Terbaca) ---
+          # --- 5. Setup Submodule & Git State ---
           
           if [ -d "KernelSU-Next" ]; then
             KSU_DIR="KernelSU-Next"
@@ -114,14 +110,14 @@ jobs:
             exit 1
           fi
           
-          # Hapus .git milik SUSFS (dia tidak perlu jadi submodule)
+          # Hapus .git milik SUSFS
           rm -rf sus/.git
           
-          # Add ke git (KernelSU-Next akan otomatis jadi submodule)
+          # Add ke git (KernelSU-Next jadi submodule)
           git add $KSU_DIR
           git add sus
           
-          git commit -m "Inject KernelSU-Next & SUSFS (Manual Adapt)" || true
+          git commit -m "Inject KernelSU-Next & SUSFS (Branch: gki-android12-5.10)" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -151,7 +147,7 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
-          # Sesuai instruksi README SUSFS: Pastikan Config aktif
+          # Pastikan Config KSU & SUSFS Aktif
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
 
