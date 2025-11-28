@@ -1,4 +1,4 @@
-name: Aetherium3.01 KSU-Ori
+name: Build GKI Aetherium3.01 KSS
 
 on:
   workflow_dispatch:
@@ -14,11 +14,11 @@ jobs:
         with:
           root-reserve-mb: 8192
           swap-size-mb: 10240
-          remove-dotnet: true
-          remove-android: true
-          remove-haskell: true
-          remove-codeql: true
-          remove-docker-images: true
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
 
       - name: Setup git identity
         run: |
@@ -45,31 +45,32 @@ jobs:
         run: |
           cd gki/common
           
-          echo ">>> Installing KernelSU..."
+          echo "Installing KernelSU..."
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
-          echo ">>> Installing SUSFS..."
+          echo "Installing SUSFS..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
           
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/* include/
           patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-          echo ">>> Patching KernelSU for SUSFS..."
+          echo "Patching KernelSU for SUSFS..."
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
 
-          echo ">>> Generating KernelSU version..."
+          echo "Generating KernelSU version..."
           KSU_VERSION=$(( $(git rev-list --count HEAD) + 10000 ))
-          echo $KSU_VERSION > ../../../ksu_version.txt
-
-          echo ">>> Injecting KSU_GIT_VERSION into KernelSU Makefile BEFORE builds"
+          echo "Detected Version: $KSU_VERSION"
+          
+          cd .. 
+          
+          echo "Injecting KSU_GIT_VERSION into KernelSU Makefile..."
           sed -i "1i KSU_GIT_VERSION := $KSU_VERSION" drivers/kernelsu/Makefile
 
-          echo "Injected version:"
-          head -n 5 drivers/kernelsu/Makefile
-          cd ..
-          
+          echo "Check Makefile content:"
+          head -n 3 drivers/kernelsu/Makefile
+
       - name: Fix KernelSU and susfs directory state
         run: |
           cd gki/common
@@ -96,7 +97,7 @@ jobs:
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           
-          echo ">>> Injecting custom configs"
+          echo "Injecting custom configs"
           {
             echo "CONFIG_TMPFS_XATTR=y"
             echo "CONFIG_TMPFS_POSIX_ACL=y"
@@ -119,9 +120,9 @@ jobs:
           chmod +x scripts/setlocalversion
 
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS/' Makefile
           else
-            echo 'EXTRAVERSION = -Aetherium3.0-Eclipse-KSS' >> Makefile
+            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS' >> Makefile
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
@@ -137,8 +138,7 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          
-          echo ">>> Starting kernel build..."
+          echo "Starting kernel build..."
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
