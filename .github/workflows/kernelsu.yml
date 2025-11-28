@@ -27,7 +27,8 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          sudo apt update && sudo apt upgrade -y
+          # HANYA UPDATE, JANGAN UPGRADE
+          sudo apt update
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
 
@@ -60,17 +61,17 @@ jobs:
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
           
-          # Cek status folder git (buat mastiin aja)
+          # Pastikan .git masih ada
           if [ -d ".git" ]; then
-             echo "KernelSU .git folder exists! Good."
+             echo "AMAN: Folder .git KernelSU masih ada."
           fi
           cd ..
 
       - name: Ignore KernelSU in Main Git
         run: |
           cd gki/common
-          # Ini kuncinya: Kita suruh git utama CUEK sama folder KernelSU & susfs4ksu
-          # Jadi kita gak perlu commit folder itu, dan gak perlu hapus .git di dalamnya
+          # Masukkan folder ke .gitignore biar git utama gak rewel
+          # Jadi kita gak perlu hapus .git di dalamnya
           echo "KernelSU/" >> .gitignore
           echo "susfs4ksu/" >> .gitignore
           
@@ -125,7 +126,7 @@ jobs:
       - name: Final Clean Tree Commit
         run: |
           cd gki/common
-          # Karena KernelSU udah di .gitignore, git add . bakal aman
+          # Karena KernelSU udah di .gitignore, git add aman
           git add .
           git commit -m "Final clean tree before build" || true
 
@@ -133,7 +134,7 @@ jobs:
         run: |
           cd gki
           echo "Starting kernel build..."
-          # Tidak perlu export manual, biarkan Makefile KernelSU baca sendiri dari .git
+          # Build jalan, versi KSU aman karena folder .git masih ada
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
