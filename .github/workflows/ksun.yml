@@ -58,12 +58,10 @@ jobs:
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           
           # --- 3. Patching Sisi KERNEL (fs & include) ---
-          # Copy folder fs dan include
           cp -r sus/kernel_patches/fs/. fs/
           cp -r sus/kernel_patches/include/. include/
           
-          # Apply Patch Utama ke Kernel
-          # Kita gunakan nama file spesifik agar YAML tidak error membaca wildcard
+          # Apply Patch Utama ke Kernel (Nama file hardcoded agar YAML aman)
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           
           echo "Applying SUSFS Patch to Kernel..."
