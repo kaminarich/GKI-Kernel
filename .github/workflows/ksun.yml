@@ -45,7 +45,8 @@ jobs:
             echo "Warning: build.config.gki not found, skipping modification."
           fi
 
-      - name: Apply KernelSU-Next & SUSFS (Branch: gki-android12-5.10)
+      # TANDA KUTIP DITAMBAHKAN DI BAWAH INI AGAR TIDAK ERROR SYNTAX
+      - name: "Apply KernelSU-Next & SUSFS (Branch: gki-android12-5.10)"
         run: |
           cd gki/common
           
@@ -121,7 +122,7 @@ jobs:
           git add .
           git commit -m "Apply cherry-pick: 477706c" || true
 
-      - name: Add Custom Network & FS Configs
+      - name: "Add Custom Network & FS Configs"
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           echo "Injecting custom configs to $DEFCONFIG"
@@ -140,7 +141,7 @@ jobs:
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
 
-      - name: Set Kernel Name and Branding (CLEAN)
+      - name: "Set Kernel Name and Branding (CLEAN)"
         run: |
           cd gki/common
           BRAND="-💠Aetherium3.0-Eclipse-KSNSF"
