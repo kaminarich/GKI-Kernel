@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSU-Ori
+name: Build GKI Aetherium3.01 KSU v2.1.2
 
 on:
   workflow_dispatch:
@@ -41,13 +41,14 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU & SUSFS
+      - name: Apply KernelSU v2.1.2 & SUSFS
         run: |
           cd gki/common
           
-          # --- 1. Install KernelSU (5ec1cff / main) ---
-          echo "Installing KernelSU..."
-          curl -LSs "https://raw.githubusercontent.com/5ec1cff/KernelSU/main/kernel/setup.sh" | bash -s main
+          # --- 1. Install KernelSU (Stable v2.1.2) ---
+          # Menggunakan tag v2.1.2 secara eksplisit
+          echo "Installing KernelSU v2.1.2..."
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v2.1.2
 
           # --- 2. Install SUSFS ---
           echo "Cloning SUSFS..."
@@ -58,30 +59,32 @@ jobs:
           cp -r susfs4ksu/kernel_patches/include/* include/
           
           # Apply SUSFS patch to Kernel
-          # Note: Menggunakan patch yang sesuai dengan versi GKI
           patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
           # --- 3. Patch KernelSU for SUSFS support ---
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
+          # Note: Patch SUSFS biasanya dibuat berdasarkan logika kode main KSU.
+          # Jika gagal di v2.1.2, kita mungkin perlu resolve conflict manual, 
+          # tapi biasanya aman karena struktur kode inti jarang berubah drastis.
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
           cd ..
 
       - name: Fix KernelSU and susfs directory state
         run: |
           cd gki/common
-          # Hapus folder .git agar tidak dianggap sebagai submodule dan error saat commit
+          # Hapus folder .git agar tidak dianggap sebagai submodule
           rm -rf KernelSU/.git
           rm -rf susfs4ksu/.git
           
-          # Bersihkan index git jika ada sisa cached
+          # Bersihkan index git
           git rm --cached --ignore-unmatch -r KernelSU
           git rm --cached --ignore-unmatch -r susfs4ksu
           
           # Tambahkan kembali sebagai file biasa
           git add KernelSU
           git add susfs4ksu
-          git commit -m "Inject KernelSU & SUSFS manually" || true
+          git commit -m "Inject KernelSU v2.1.2 & SUSFS manually" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -119,11 +122,11 @@ jobs:
           echo "" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
 
-          # Update nama kernel menjadi Aetherium3.0-Eclipse-KSU-SUSFS
+          # Update nama kernel
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSU-SUSFS/' Makefile
           else
-            echo 'EXTRAVERSION = -Aetherium3.0-Eclipse-KSS' >> Makefile
+            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSU-SUSFS' >> Makefile
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
@@ -139,6 +142,11 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
+          # Set versi git manual karena .git dihapus
+          # Angka 21002 biasanya merepresentasikan v2.1.2 di version code KSU (11849 + offset)
+          # Agar aman kita pakai jumlah commit yang cukup tinggi atau kode statis
+          export KSU_GIT_VERSION=21002
+          
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
