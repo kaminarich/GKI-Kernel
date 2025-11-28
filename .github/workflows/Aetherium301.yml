@@ -1,4 +1,4 @@
-name: Build GKI Aetherium Suki (Default Name)
+name: Build GKI Aetherium Suki (v3.1.8 + SUSFS v1.5.12)
 
 on:
   workflow_dispatch:
@@ -41,21 +41,41 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply SukiSU Patch (Fixed v3.1.8)
+      - name: Apply SukiSU v3.1.8 & SUSFS v1.5.12
         run: |
           cd gki/common
           
           # 1. Install SukiSU spesifik v3.1.8
+          echo "Installing SukiSU v3.1.8..."
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s v3.1.8
           
-          # 2. Lanjut Clone & Patch SUSFS Manual (GitLab)
-          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
-          rm -rf sus/.git
-          susfs=sus/kernel_patches
-          cp -r $susfs/fs .
-          cp -r $susfs/include .
-          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          # 2. Clone SUSFS & Checkout v1.5.12
+          echo "Cloning SUSFS and checking out v1.5.12..."
+          # Kita tidak pakai --depth=1 agar bisa checkout tag lama
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git sus
+          
+          cd sus
+          # Checkout ke versi 1.5.12
+          git checkout v1.5.12
+          cd ..
+          
+          # 3. Apply Patch SUSFS
+          # Menggunakan wildcard (*) untuk patch file karena di v1.5.12 namanya mungkin sedikit berbeda
+          # tapi biasanya '50_add_susfs_in_gki-android12-5.10.patch'
+          
+          susfs_patches="sus/kernel_patches"
+          cp -r $susfs_patches/fs .
+          cp -r $susfs_patches/include .
+          
+          # Apply patch
+          if [ -f "$susfs_patches/50_add_susfs_in_gki-android12-5.10.patch" ]; then
+            patch -p1 < "$susfs_patches/50_add_susfs_in_gki-android12-5.10.patch"
+          else
+            # Fallback jika nama file patch berbeda di versi lama (antisipasi)
+            echo "Searching for patch file..."
+            patch_file=$(find $susfs_patches -name "*50_add_susfs_in_gki-android12-5.10.patch" | head -n 1)
+            patch -p1 < "$patch_file"
+          fi
 
       - name: Fix KernelSU and sus directory state
         run: |
