@@ -53,7 +53,7 @@ jobs:
           echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # --- 2. Clone SUSFS (Branch gki-android12-5.10) ---
+          # --- 2. Clone SUSFS (Branch: gki-android12-5.10) ---
           echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           
@@ -61,11 +61,12 @@ jobs:
           cp -r sus/kernel_patches/fs/. fs/
           cp -r sus/kernel_patches/include/. include/
           
-          # Copy file patch spesifik
-          cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
+          # Pakai wildcard biar ga salah nama file
+          cp sus/kernel_patches/50_add_susfs_in_gki-*.patch .
+          PATCH_FILE=$(ls 50_add_susfs_in_gki-*.patch | head -n 1)
           
-          echo "Applying SUSFS Patch to Kernel..."
-          patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
+          echo "Applying SUSFS Patch to Kernel: $PATCH_FILE"
+          patch -p1 --fuzz=3 < "$PATCH_FILE" || true
 
           # --- 4. Patching Sisi KERNELSU-NEXT (Manual Injection) ---
           if [ -d "KernelSU-Next" ]; then
