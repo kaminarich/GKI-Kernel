@@ -44,8 +44,12 @@ jobs:
       - name: Apply SukiSU Patch
         run: |
           cd gki/common
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          # CHANGE: Menggunakan tag v1.38 sesuai request
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s v1.38
+          
+          # Setup SUSFS (tetap menggunakan susfs-main kecuali ada tag spesifik untuk susfs v1.38)
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           rm -rf sus/.git
           susfs=sus/kernel_patches
