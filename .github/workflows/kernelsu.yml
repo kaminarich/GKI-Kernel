@@ -65,19 +65,17 @@ jobs:
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
           
-          # --- FIX GIT VERSION ---
-          # Hitung versi SEBELUM folder .git dihapus
-          # Logic: 10000 + jumlah commit = versi KernelSU standard
-          KSU_COUNT=$(git rev-list --count HEAD)
-          KSU_VERSION=$((KSU_COUNT + 10000))
-          echo "KSU_GIT_VERSION=$KSU_VERSION" >> $GITHUB_ENV
-          echo "Detected KernelSU Version: $KSU_VERSION"
+          # --- PENTING: SIMPAN VERSI SEBELUM HAPUS .GIT ---
+          # Kita simpan angkanya ke file 'ksu_version.txt' di folder root workspace
+          KSU_VERSION=$(( $(git rev-list --count HEAD) + 10000 ))
+          echo $KSU_VERSION > ../../../ksu_version.txt
+          echo "Version saved to file: $KSU_VERSION"
           cd ..
 
       - name: Fix KernelSU and susfs directory state
         run: |
           cd gki/common
-          # Hapus folder .git agar tidak dianggap sebagai submodule
+          # Sekarang aman hapus .git karena versi sudah diamankan di file text
           rm -rf KernelSU/.git
           rm -rf susfs4ksu/.git
           
@@ -146,8 +144,9 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          # Menggunakan versi yang sudah dicapture di step sebelumnya
-          export KSU_GIT_VERSION=${{ env.KSU_GIT_VERSION }}
+          
+          # Baca versi dari file yang tadi disimpan
+          export KSU_GIT_VERSION=$(cat ../ksu_version.txt)
           echo "Building with KSU Version: $KSU_GIT_VERSION"
           
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
