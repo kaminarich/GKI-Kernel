@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSS
+name: Build GKI Aetherium3.01 KSS (No Git Delete)
 
 on:
   workflow_dispatch:
@@ -41,11 +41,12 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU (Official) & SUSFS + Inject KSU Version
+      - name: Apply KernelSU (Official) & SUSFS
         run: |
           cd gki/common
           
           echo "Installing KernelSU..."
+          # Clone biasa, JANGAN HAPUS .git nya
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
           echo "Installing SUSFS..."
@@ -58,31 +59,23 @@ jobs:
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
-
-          echo "Generating KernelSU version..."
-          KSU_VERSION=$(( $(git rev-list --count HEAD) + 10000 ))
-          echo "Detected Version: $KSU_VERSION"
           
-          cd .. 
-          
-          echo "Injecting KSU_GIT_VERSION into KernelSU Makefile..."
-          sed -i "1i KSU_GIT_VERSION := $KSU_VERSION" drivers/kernelsu/Makefile
+          # Cek status folder git (buat mastiin aja)
+          if [ -d ".git" ]; then
+             echo "KernelSU .git folder exists! Good."
+          fi
+          cd ..
 
-          echo "Check Makefile content:"
-          head -n 3 drivers/kernelsu/Makefile
-
-      - name: Fix KernelSU and susfs directory state
+      - name: Ignore KernelSU in Main Git
         run: |
           cd gki/common
-          rm -rf KernelSU/.git
-          rm -rf susfs4ksu/.git
+          # Ini kuncinya: Kita suruh git utama CUEK sama folder KernelSU & susfs4ksu
+          # Jadi kita gak perlu commit folder itu, dan gak perlu hapus .git di dalamnya
+          echo "KernelSU/" >> .gitignore
+          echo "susfs4ksu/" >> .gitignore
           
-          git rm --cached --ignore-unmatch -r KernelSU
-          git rm --cached --ignore-unmatch -r susfs4ksu
-          
-          git add KernelSU
-          git add susfs4ksu
-          git commit -m "Inject KernelSU & SUSFS manually" || true
+          git add .gitignore
+          git commit -m "Ignore KernelSU and SUSFS to keep their git history intact" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -132,6 +125,7 @@ jobs:
       - name: Final Clean Tree Commit
         run: |
           cd gki/common
+          # Karena KernelSU udah di .gitignore, git add . bakal aman
           git add .
           git commit -m "Final clean tree before build" || true
 
@@ -139,6 +133,7 @@ jobs:
         run: |
           cd gki
           echo "Starting kernel build..."
+          # Tidak perlu export manual, biarkan Makefile KernelSU baca sendiri dari .git
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
