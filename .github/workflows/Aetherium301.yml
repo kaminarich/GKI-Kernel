@@ -1,4 +1,4 @@
-name: Build GKI Aetherium Suki (v3.1.8 + SUSFS Downgrade)
+name: Build GKI Aetherium Suki (Fix SUSFS & Version)
 
 on:
   workflow_dispatch:
@@ -41,69 +41,75 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply SukiSU v3.1.8 & SUSFS Downgrade (Manual)
+      - name: Apply SukiSU v3.1.8 (Strict) & SUSFS
         run: |
           cd gki/common
           
-          # 1. Install SukiSU spesifik v3.1.8
-          echo "Installing SukiSU v3.1.8..."
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s v3.1.8
+          # --- 1. Install SukiSU (Manual Clone & Local Setup) ---
+          # Kita tidak pakai curl ke main, tapi clone manual agar setup.sh sesuai versi v3.1.8
+          echo "Cloning SukiSU..."
+          rm -rf KernelSU
+          git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra KernelSU
           
-          # 2. Clone SUSFS (Official GitLab) - Branch gki-android12-5.10
-          # Ini adalah branch untuk kernel 5.10 (biasanya versi 1.5.x logic)
-          echo "Cloning SUSFS branch gki-android12-5.10..."
+          cd KernelSU
+          echo "Checkout SukiSU v3.1.8..."
+          git checkout v3.1.8
+          cd ..
+          
+          # Jalankan setup.sh DARI DALAM folder versi 3.1.8
+          echo "Running local SukiSU setup script..."
+          ./KernelSU/kernel/setup.sh
+          
+          # --- 2. Clone SUSFS (Branch gki-android12-5.10) ---
+          echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           
-          # 3. Manual Patching (Sesuai Instruksi Downgrade/Manual)
-          # Kita copy file fs dan include ke source kernel
-          echo "Copying SUSFS files..."
+          # --- 3. Patching SUSFS ---
+          echo "Applying SUSFS Patch..."
           cp -r sus/kernel_patches/fs/* fs/
           cp -r sus/kernel_patches/include/linux/* include/linux/
-          
-          # Copy patch file ke root kernel agar mudah dipatch
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
-          
-          # Apply Patch Kernel
-          echo "Applying SUSFS Kernel Patch..."
           patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
 
       - name: Fix KernelSU and sus directory state
         run: |
           cd gki/common
-          # Hapus folder .git agar tidak dianggap sebagai submodule
+          # Bersihkan git info agar tidak error saat commit
           rm -rf KernelSU/.git
           rm -rf sus/.git
-          
-          # Gunakan --ignore-unmatch agar tidak error false alarm di log
           git rm --cached --ignore-unmatch -r KernelSU
           git rm --cached --ignore-unmatch -r sus
-          
-          # Tambahkan kembali sebagai file biasa
           git add KernelSU
           git add sus
-          git commit -m "Inject KernelSU & SUSFS manually" || true
+          git commit -m "Inject SukiSU v3.1.8 & SUSFS" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
           cd gki/common
-          # Download patch dari commit GitHub
           curl -L https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch > custom_cherrypick.patch
-          
-          # Apply patch
-          echo "Applying custom cherry-pick..."
           git apply -v custom_cherrypick.patch
-          
-          # Bersihkan dan commit
           rm custom_cherrypick.patch
           git add .
           git commit -m "Apply cherry-pick: 477706c" || true
 
-      - name: Add Custom Network & FS Configs
+      - name: Add Custom Network & FS Configs (+ Enable SUSFS)
         run: |
-          # Set path ke file config
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           
           echo "Injecting custom configs to $DEFCONFIG"
+          
+          # === Wajib: Enable SUSFS ===
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SUS_SU=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
+          
+          # Config Tambahan User
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
