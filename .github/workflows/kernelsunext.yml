@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 ksun
+name: Build Aetherium3.01 ksun
 
 on:
   workflow_dispatch:
