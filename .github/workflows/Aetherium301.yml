@@ -1,4 +1,4 @@
-name: Build GKI Aetherium Suki (Fix SUSFS & Version)
+name: Build GKI Suki v3.1.8 (Manual Injection)
 
 on:
   workflow_dispatch:
@@ -41,47 +41,65 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply SukiSU v3.1.8 (Strict) & SUSFS
+      - name: Inject SukiSU v3.1.8 (MANUAL LOCK)
         run: |
           cd gki/common
           
-          # --- 1. Install SukiSU (Manual Clone & Local Setup) ---
-          # Kita tidak pakai curl ke main, tapi clone manual agar setup.sh sesuai versi v3.1.8
-          echo "Cloning SukiSU..."
+          # 1. Clone SukiSU
+          echo "=== Cloning SukiSU ==="
           rm -rf KernelSU
           git clone https://github.com/SukiSU-Ultra/SukiSU-Ultra KernelSU
           
+          # 2. Checkout v3.1.8 & HAPUS Git (Supaya gak bisa update otomatis)
           cd KernelSU
-          echo "Checkout SukiSU v3.1.8..."
+          echo "=== Locking Version v3.1.8 ==="
           git checkout v3.1.8
+          rm -rf .git 
           cd ..
           
-          # Jalankan setup.sh DARI DALAM folder versi 3.1.8
-          echo "Running local SukiSU setup script..."
-          ./KernelSU/kernel/setup.sh
+          # 3. Pasang Manual (Pengganti setup.sh)
+          echo "=== Manual Symlink & Injection ==="
+          # Buat shortcut folder
+          ln -sf ../KernelSU/kernel drivers/kernelsu
           
-          # --- 2. Clone SUSFS (Branch gki-android12-5.10) ---
-          echo "Cloning SUSFS..."
+          # Masukkan ke drivers/Makefile
+          if ! grep -q "kernelsu" drivers/Makefile; then
+            echo "obj-y += kernelsu/" >> drivers/Makefile
+          fi
+          
+          # Masukkan ke drivers/Kconfig (sebelum endmenu terakhir)
+          if ! grep -q "kernelsu" drivers/Kconfig; then
+            sed -i '/endmenu/i source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          fi
+          
+          echo "SukiSU v3.1.8 Successfully Locked!"
+
+      - name: Apply SUSFS Patch (Branch Legacy)
+        run: |
+          cd gki/common
+          
+          # 1. Clone SUSFS Branch Lama (Kompatibel dengan v3.1.8)
+          echo "=== Cloning SUSFS ==="
           git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           
-          # --- 3. Patching SUSFS ---
-          echo "Applying SUSFS Patch..."
+          # 2. Copy File SUSFS
+          echo "=== Copying SUSFS Files ==="
           cp -r sus/kernel_patches/fs/* fs/
           cp -r sus/kernel_patches/include/linux/* include/linux/
+          
+          # 3. Apply Patch
+          echo "=== Applying Patch ==="
           cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
 
-      - name: Fix KernelSU and sus directory state
+      - name: Fix Directory State
         run: |
           cd gki/common
-          # Bersihkan git info agar tidak error saat commit
-          rm -rf KernelSU/.git
-          rm -rf sus/.git
-          git rm --cached --ignore-unmatch -r KernelSU
-          git rm --cached --ignore-unmatch -r sus
-          git add KernelSU
-          git add sus
-          git commit -m "Inject SukiSU v3.1.8 & SUSFS" || true
+          # Hapus folder sisa clone
+          rm -rf sus
+          # Commit manual injection agar build system mendeteksinya
+          git add .
+          git commit -m "Manual Injection: SukiSU v3.1.8 + SUSFS" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -99,6 +117,7 @@ jobs:
           echo "Injecting custom configs to $DEFCONFIG"
           
           # === Wajib: Enable SUSFS ===
+          # Tanpa ini fitur SUSFS tidak akan aktif walau sudah di-patch
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
@@ -109,7 +128,7 @@ jobs:
           echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
           
-          # Config Tambahan User
+          # Config Tambahan Lainnya
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
