@@ -65,17 +65,17 @@ jobs:
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
           
-          # --- PENTING: SIMPAN VERSI SEBELUM HAPUS .GIT ---
-          # Kita simpan angkanya ke file 'ksu_version.txt' di folder root workspace
+          # --- 4. SIMPAN VERSI KE FILE ---
+          # Kita simpan angkanya ke file teks di luar folder source
           KSU_VERSION=$(( $(git rev-list --count HEAD) + 10000 ))
           echo $KSU_VERSION > ../../../ksu_version.txt
-          echo "Version saved to file: $KSU_VERSION"
+          echo "Version saved: $KSU_VERSION"
           cd ..
 
       - name: Fix KernelSU and susfs directory state
         run: |
           cd gki/common
-          # Sekarang aman hapus .git karena versi sudah diamankan di file text
+          # Hapus folder .git
           rm -rf KernelSU/.git
           rm -rf susfs4ksu/.git
           
@@ -126,7 +126,7 @@ jobs:
 
           # Update nama kernel
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSUS/' Makefile
           else
             echo 'EXTRAVERSION = -Aetherium3.0-Eclipse-KSS' >> Makefile
           fi
@@ -145,10 +145,19 @@ jobs:
         run: |
           cd gki
           
-          # Baca versi dari file yang tadi disimpan
-          export KSU_GIT_VERSION=$(cat ../ksu_version.txt)
-          echo "Building with KSU Version: $KSU_GIT_VERSION"
+          # --- FIX: HARDCODE VERSI KE MAKEFILE ---
+          # Baca versi yang tadi disimpan
+          KSU_VER=$(cat ../ksu_version.txt)
+          echo "Injecting KSU Version: $KSU_VER into Makefile"
           
+          # Masukkan 'KSU_GIT_VERSION := <angka>' ke baris paling atas Makefile KernelSU
+          # Lokasi Makefile ada di common/drivers/kernelsu/Makefile
+          sed -i "1i KSU_GIT_VERSION := $KSU_VER" common/drivers/kernelsu/Makefile
+          
+          # Cek apakah berhasil tertulis
+          head -n 3 common/drivers/kernelsu/Makefile
+          
+          # Mulai Build
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
