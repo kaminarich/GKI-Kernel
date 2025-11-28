@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSU v2.1.2
+name: Build GKI Aetherium3.01 KSU-Ori
 
 on:
   workflow_dispatch:
@@ -41,14 +41,13 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU v2.1.2 & SUSFS
+      - name: Apply KernelSU (Ori) & SUSFS
         run: |
           cd gki/common
           
-          # --- 1. Install KernelSU (Stable v2.1.2) ---
-          # Menggunakan tag v2.1.2 secara eksplisit
-          echo "Installing KernelSU v2.1.2..."
-          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s v2.1.2
+          # --- 1. Install KernelSU (Official Main) ---
+          echo "Installing KernelSU..."
+          curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
           # --- 2. Install SUSFS ---
           echo "Cloning SUSFS..."
@@ -64,10 +63,15 @@ jobs:
           # --- 3. Patch KernelSU for SUSFS support ---
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
-          # Note: Patch SUSFS biasanya dibuat berdasarkan logika kode main KSU.
-          # Jika gagal di v2.1.2, kita mungkin perlu resolve conflict manual, 
-          # tapi biasanya aman karena struktur kode inti jarang berubah drastis.
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+          
+          # --- FIX GIT VERSION ---
+          # Hitung versi SEBELUM folder .git dihapus
+          # Logic: 10000 + jumlah commit = versi KernelSU standard
+          KSU_COUNT=$(git rev-list --count HEAD)
+          KSU_VERSION=$((KSU_COUNT + 10000))
+          echo "KSU_GIT_VERSION=$KSU_VERSION" >> $GITHUB_ENV
+          echo "Detected KernelSU Version: $KSU_VERSION"
           cd ..
 
       - name: Fix KernelSU and susfs directory state
@@ -84,7 +88,7 @@ jobs:
           # Tambahkan kembali sebagai file biasa
           git add KernelSU
           git add susfs4ksu
-          git commit -m "Inject KernelSU v2.1.2 & SUSFS manually" || true
+          git commit -m "Inject KernelSU & SUSFS manually" || true
 
       - name: Apply Cherry-pick from Pzqqt
         run: |
@@ -124,9 +128,9 @@ jobs:
 
           # Update nama kernel
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSU-SUSFS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSS/' Makefile
           else
-            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSU-SUSFS' >> Makefile
+            echo 'EXTRAVERSION = -Aetherium3.0-Eclipse-KSS' >> Makefile
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
@@ -142,10 +146,9 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          # Set versi git manual karena .git dihapus
-          # Angka 21002 biasanya merepresentasikan v2.1.2 di version code KSU (11849 + offset)
-          # Agar aman kita pakai jumlah commit yang cukup tinggi atau kode statis
-          export KSU_GIT_VERSION=21002
+          # Menggunakan versi yang sudah dicapture di step sebelumnya
+          export KSU_GIT_VERSION=${{ env.KSU_GIT_VERSION }}
+          echo "Building with KSU Version: $KSU_GIT_VERSION"
           
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
