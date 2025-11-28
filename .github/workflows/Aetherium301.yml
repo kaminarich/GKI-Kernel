@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 Suki
+name: Build GKI Aetherium Suki (Default Name)
 
 on:
   workflow_dispatch:
@@ -41,15 +41,14 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply SukiSU Patch (v3.1.8)
+      - name: Apply SukiSU Patch (Fixed v3.1.8)
         run: |
           cd gki/common
-          # CHANGE: Menggunakan tag v3.1.8 sesuai link GitHub yang diberikan
+          
+          # 1. Install SukiSU spesifik v3.1.8
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s v3.1.8
           
-          # Setup SUSFS
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          
+          # 2. Lanjut Clone & Patch SUSFS Manual (GitLab)
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
           rm -rf sus/.git
           susfs=sus/kernel_patches
@@ -107,19 +106,6 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
-
-      - name: Set Kernel EXTRAVERSION
-        run: |
-          cd gki/common
-          echo "" > scripts/setlocalversion
-          chmod +x scripts/setlocalversion
-
-          # Update nama kernel menjadi Aetherium3.0-Eclipse-SukiSUSU
-          if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU/' Makefile
-          else
-            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-SukiSUSU' >> Makefile
-          fi
 
       - name: Append CONFIG_HZ_300 to defconfig
         run: |
