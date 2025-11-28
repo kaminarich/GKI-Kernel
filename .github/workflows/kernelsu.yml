@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSU-Ori
+name: Aetherium3.01 KSU-Ori
 
 on:
   workflow_dispatch:
@@ -14,11 +14,11 @@ jobs:
         with:
           root-reserve-mb: 8192
           swap-size-mb: 10240
-          remove-dotnet: 'true'
-          remove-android: 'true'
-          remove-haskell: 'true'
-          remove-codeql: 'true'
-          remove-docker-images: 'true'
+          remove-dotnet: true
+          remove-android: true
+          remove-haskell: true
+          remove-codeql: true
+          remove-docker-images: true
 
       - name: Setup git identity
         run: |
@@ -41,49 +41,44 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU (Ori) & SUSFS
+      - name: Apply KernelSU (Official) & SUSFS + Inject KSU Version
         run: |
           cd gki/common
           
-          # --- 1. Install KernelSU (Official Main) ---
-          echo "Installing KernelSU..."
+          echo ">>> Installing KernelSU..."
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
-          # --- 2. Install SUSFS ---
-          echo "Cloning SUSFS..."
+          echo ">>> Installing SUSFS..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
           
-          # Copy SUSFS files to kernel source
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/* include/
-          
-          # Apply SUSFS patch to Kernel
           patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-          # --- 3. Patch KernelSU for SUSFS support ---
-          echo "Patching KernelSU for SUSFS..."
+          echo ">>> Patching KernelSU for SUSFS..."
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
-          
-          # --- 4. SIMPAN VERSI KE FILE ---
-          # Kita simpan angkanya ke file teks di luar folder source
+
+          echo ">>> Generating KernelSU version..."
           KSU_VERSION=$(( $(git rev-list --count HEAD) + 10000 ))
           echo $KSU_VERSION > ../../../ksu_version.txt
-          echo "Version saved: $KSU_VERSION"
-          cd ..
 
+          echo ">>> Injecting KSU_GIT_VERSION into KernelSU Makefile BEFORE builds"
+          sed -i "1i KSU_GIT_VERSION := $KSU_VERSION" drivers/kernelsu/Makefile
+
+          echo "Injected version:"
+          head -n 5 drivers/kernelsu/Makefile
+          cd ..
+          
       - name: Fix KernelSU and susfs directory state
         run: |
           cd gki/common
-          # Hapus folder .git
           rm -rf KernelSU/.git
           rm -rf susfs4ksu/.git
           
-          # Bersihkan index git
           git rm --cached --ignore-unmatch -r KernelSU
           git rm --cached --ignore-unmatch -r susfs4ksu
           
-          # Tambahkan kembali sebagai file biasa
           git add KernelSU
           git add susfs4ksu
           git commit -m "Inject KernelSU & SUSFS manually" || true
@@ -92,10 +87,7 @@ jobs:
         run: |
           cd gki/common
           curl -L https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch > custom_cherrypick.patch
-          
-          echo "Applying custom cherry-pick..."
           git apply -v custom_cherrypick.patch
-          
           rm custom_cherrypick.patch
           git add .
           git commit -m "Apply cherry-pick: 477706c" || true
@@ -104,19 +96,21 @@ jobs:
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           
-          echo "Injecting custom configs to $DEFCONFIG"
-          echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
-          echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
-          echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
-          echo "CONFIG_IP6_NF_TARGET_HL=y" >> $DEFCONFIG
-          echo "CONFIG_IP6_NF_MATCH_HL=y" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_ADVANCED=y" >> $DEFCONFIG 
-          echo "CONFIG_TCP_CONG_BBR=y" >> $DEFCONFIG
-          echo "CONFIG_NET_SCH_FQ=y" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_BIC=n" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
-          echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
-          echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
+          echo ">>> Injecting custom configs"
+          {
+            echo "CONFIG_TMPFS_XATTR=y"
+            echo "CONFIG_TMPFS_POSIX_ACL=y"
+            echo "CONFIG_IP_NF_TARGET_TTL=y"
+            echo "CONFIG_IP6_NF_TARGET_HL=y"
+            echo "CONFIG_IP6_NF_MATCH_HL=y"
+            echo "CONFIG_TCP_CONG_ADVANCED=y"
+            echo "CONFIG_TCP_CONG_BBR=y"
+            echo "CONFIG_NET_SCH_FQ=y"
+            echo "CONFIG_TCP_CONG_BIC=n"
+            echo "CONFIG_TCP_CONG_WESTWOOD=n"
+            echo "CONFIG_TCP_CONG_HTCP=n"
+            echo "CONFIG_DEFAULT_BBR=y"
+          } >> $DEFCONFIG
 
       - name: Set Kernel EXTRAVERSION
         run: |
@@ -124,9 +118,8 @@ jobs:
           echo "" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
 
-          # Update nama kernel
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSUS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -Aetherium3.0-Eclipse-KSS/' Makefile
           else
             echo 'EXTRAVERSION = -Aetherium3.0-Eclipse-KSS' >> Makefile
           fi
@@ -145,27 +138,16 @@ jobs:
         run: |
           cd gki
           
-          # --- FIX: HARDCODE VERSI KE MAKEFILE ---
-          # Baca versi yang tadi disimpan
-          KSU_VER=$(cat ../ksu_version.txt)
-          echo "Injecting KSU Version: $KSU_VER into Makefile"
-          
-          # Masukkan 'KSU_GIT_VERSION := <angka>' ke baris paling atas Makefile KernelSU
-          # Lokasi Makefile ada di common/drivers/kernelsu/Makefile
-          sed -i "1i KSU_GIT_VERSION := $KSU_VER" common/drivers/kernelsu/Makefile
-          
-          # Cek apakah berhasil tertulis
-          head -n 3 common/drivers/kernelsu/Makefile
-          
-          # Mulai Build
+          echo ">>> Starting kernel build..."
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
-        if: always() 
+        if: always()
         run: |
-          if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
+          IMG=gki/out/android12-5.10/common/arch/arm64/boot/Image
+          if [ -f "$IMG" ]; then
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
-              -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
+              -F file=@"$IMG" \
               https://pixeldrain.com/api/file
           else
             echo "Image file not found. Build likely failed."
