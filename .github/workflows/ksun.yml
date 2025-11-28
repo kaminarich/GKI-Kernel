@@ -9,7 +9,7 @@ jobs:
     runs-on: ubuntu-22.04
 
     steps:
-      - name: Maximize Build Space
+      - name: "Maximize Build Space"
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
@@ -20,24 +20,24 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: Setup git identity
+      - name: "Setup git identity"
         run: |
           git config --global user.name "kaminari"
           git config --global user.email "itawanri14@gmail.com"
 
-      - name: Install Dependencies
+      - name: "Install Dependencies"
         run: |
           sudo apt update && sudo apt upgrade -y
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
 
-      - name: Create and Init GKI Source (Shallow)
+      - name: "Create and Init GKI Source (Shallow)"
         run: |
           mkdir gki && cd gki
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-      - name: Delete Line 2 in build.config.gki
+      - name: "Delete Line 2 in build.config.gki"
         run: |
           if [ -f gki/common/build.config.gki ]; then
             sed -i '2d' gki/common/build.config.gki
@@ -45,68 +45,57 @@ jobs:
             echo "Warning: build.config.gki not found, skipping modification."
           fi
 
-      - name: Apply KernelSU-Next & SUSFS (MANUAL INJECTION FOR NEXT)
+      - name: "Apply KernelSU Next and SUSFS"
         run: |
           cd gki/common
           
-          # --- 1. Install KernelSU-Next ---
+          # 1. Install KernelSU-Next
           echo "Installing KernelSU-Next..."
           curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s next
           
-          # --- 2. Clone SUSFS (Sesuai instruksi: Branch android12-5.10) ---
+          # 2. Clone SUSFS (Branch gki-android12-5.10)
           echo "Cloning SUSFS..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b android12-5.10 sus
+          git clone https://gitlab.com/simonpunk/susfs4ksu.git -b gki-android12-5.10 sus
           
-          # --- 3. Implementasi Instruksi README (Sisi Kernel) ---
+          # 3. Patching Sisi KERNEL
+          # Copy folder fs dan include
+          cp -r sus/kernel_patches/fs/. fs/
+          cp -r sus/kernel_patches/include/. include/
           
-          # "Run cp ./kernel_patches/fs/susfs.c $KERNEL_ROOT/fs/"
-          cp sus/kernel_patches/fs/susfs.c fs/
+          # Copy file patch (Explicit Name biar ga error)
+          cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch .
           
-          # "Run cp ./kernel_patches/include/linux/susfs.h $KERNEL_ROOT/include/linux/"
-          cp sus/kernel_patches/include/linux/susfs.h include/linux/
-          
-          # "Run cd $KERNEL_ROOT and then patch -p1 < 50_add_susfs_in_kernel.patch"
-          # Kita cari file patchnya (karena namanya kadang ada versi kernelnya)
-          PATCH_FILE=$(find sus/kernel_patches -name "50_add_susfs_in_kernel-*.patch" | head -n 1)
-          cp "$PATCH_FILE" .
-          echo "Applying Kernel-side Patch: $(basename $PATCH_FILE)"
-          patch -p1 --fuzz=3 < "$(basename $PATCH_FILE)" || true
+          echo "Applying SUSFS Patch to Kernel..."
+          patch -p1 --fuzz=3 < 50_add_susfs_in_gki-android12-5.10.patch || true
 
-          # --- 4. Implementasi Instruksi README (Sisi KernelSU) - MANUAL MODE ---
-          # PENTING: Kita TIDAK pakai '10_enable_susfs_for_ksu.patch' karena itu untuk KSU Original.
-          # Kita inject manual kodenya agar kompatibel dengan KSU-Next.
-          
+          # 4. Patching Sisi KERNELSU-NEXT (Manual Injection)
+          # Wajib manual karena patch bawaan SUSFS tidak support KSU-Next (bakal error ksu_file_sid)
           if [ -d "KernelSU-Next" ]; then
-             echo "Injecting SUSFS into KernelSU-Next manually..."
+             echo "Injecting SUSFS support into KernelSU-Next manually..."
              cd KernelSU-Next
              
-             # A. Modifikasi Makefile (Agar susfs.c ikut di-compile)
-             # Menambahkan: obj-$(CONFIG_KSU) += kernel/susfs.o
+             # A. Modifikasi Makefile
              sed -i '/obj-$(CONFIG_KSU).*+=/a ccflags-y += -I$(srctree)/drivers/kernelsu/include\nobj-$(CONFIG_KSU) += kernel/susfs.o' kernel/Makefile
              
-             # Copy susfs.c ke folder kernel milik KSU juga (sebagai backup/referensi build)
+             # B. Copy susfs.c
              cp ../sus/kernel_patches/fs/susfs.c kernel/
              
-             # B. Modifikasi ksu.c (Init SUSFS saat boot)
+             # C. Modifikasi ksu.c (Include & Init)
              sed -i '/#include "ksu.h"/a #include <linux/susfs.h>' kernel/ksu.c
              sed -i '/pr_info("KernelSU: initialized/i \    susfs_init();' kernel/ksu.c
              
-             # C. Modifikasi selinux.c (Definisikan variabel ksu_file_sid)
+             # D. Modifikasi selinux.c (Definisi Variabel)
              sed -i '/#include "selinux.h"/a #include <linux/susfs.h>' kernel/selinux/selinux.c
-             # Masukkan "u32 ksu_file_sid;" sebelum struct ksu_security_hooks
              sed -i '/struct ksu_security_hooks/i u32 ksu_file_sid;\n' kernel/selinux/selinux.c
              
-             # D. [FIX UTAMA] Modifikasi sucompat.c
-             # Error log kamu sebelumnya: "undeclared identifier ksu_file_sid" di sucompat.c
-             # Solusi: Kita tambahkan "extern u32 ksu_file_sid;" di file ini.
+             # E. Modifikasi sucompat.c (Fix Error Undeclared Identifier)
              sed -i '/#include "sucompat.h"/a extern u32 ksu_file_sid;' kernel/sucompat.c
              
-             echo "Manual injection complete. Ready for build."
+             echo "Manual injection complete."
              cd ..
           fi
 
-          # --- 5. Setup Submodule (Agar Versi Terbaca) ---
-          
+          # 5. Setup Submodule (Agar versi KSU terbaca)
           if [ -d "KernelSU-Next" ]; then
             KSU_DIR="KernelSU-Next"
           else
@@ -114,16 +103,12 @@ jobs:
             exit 1
           fi
           
-          # Hapus .git milik SUSFS (dia tidak perlu jadi submodule)
           rm -rf sus/.git
-          
-          # Add ke git (KernelSU-Next akan otomatis jadi submodule)
           git add $KSU_DIR
           git add sus
-          
-          git commit -m "Inject KernelSU-Next & SUSFS (Manual Adapt)" || true
+          git commit -m "Inject KernelSU-Next and SUSFS" || true
 
-      - name: Apply Cherry-pick from Pzqqt
+      - name: "Apply Cherry pick from Pzqqt"
         run: |
           cd gki/common
           curl -L https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch > custom_cherrypick.patch
@@ -133,9 +118,9 @@ jobs:
           
           rm custom_cherrypick.patch
           git add .
-          git commit -m "Apply cherry-pick: 477706c" || true
+          git commit -m "Apply cherry-pick 477706c" || true
 
-      - name: Add Custom Network & FS Configs
+      - name: "Add Custom Network and FS Configs"
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           echo "Injecting custom configs to $DEFCONFIG"
@@ -151,11 +136,10 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
-          # Sesuai instruksi README SUSFS: Pastikan Config aktif
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
 
-      - name: Set Kernel Name and Branding (CLEAN)
+      - name: "Set Kernel Name and Branding"
         run: |
           cd gki/common
           BRAND="-💠Aetherium3.0-Eclipse-KSNSF"
@@ -169,22 +153,22 @@ jobs:
           echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG"
           echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG"
 
-      - name: Append CONFIG_HZ_300 to defconfig
+      - name: "Append CONFIG_HZ_300 to defconfig"
         run: |
           echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
 
-      - name: Final Clean Tree Commit
+      - name: "Final Clean Tree Commit"
         run: |
           cd gki/common
           git add .
           git commit -m "Final clean tree before build" || true
 
-      - name: Build Kernel
+      - name: "Build Kernel"
         run: |
           cd gki
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
-      - name: Upload Image to PixelDrain
+      - name: "Upload Image to PixelDrain"
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
