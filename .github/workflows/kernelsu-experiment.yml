@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSS (Fix Linker Error)
+name: KSS (Fix Linker Error)
 
 on:
   workflow_dispatch:
