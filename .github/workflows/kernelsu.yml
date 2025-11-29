@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSS (No Git Delete)
+name: Build GKI Aetherium3.01 KSS (Standard Latest)
 
 on:
   workflow_dispatch:
@@ -27,7 +27,6 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          # HANYA UPDATE, JANGAN UPGRADE
           sudo apt update
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
@@ -42,26 +41,28 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU (Official) & SUSFS
+      - name: Apply KernelSU (Latest) & SUSFS
         run: |
           cd gki/common
           
-          echo "Installing KernelSU..."
-          # Clone biasa, JANGAN HAPUS .git nya
+          echo "Installing KernelSU (Latest Main)..."
+          # Script ini akan clone KernelSU main terbaru dan setup Kconfig/Makefile
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
 
           echo "Installing SUSFS..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
           
+          # Patch Kernel Utama
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/* include/
           patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
+          # Patch KernelSU agar support SUSFS
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
           
-          # Pastikan .git masih ada
+          # Pastikan .git masih ada (agar version string terbaca)
           if [ -d ".git" ]; then
              echo "AMAN: Folder .git KernelSU masih ada."
           fi
@@ -70,8 +71,7 @@ jobs:
       - name: Ignore KernelSU in Main Git
         run: |
           cd gki/common
-          # Masukkan folder ke .gitignore biar git utama gak rewel
-          # Jadi kita gak perlu hapus .git di dalamnya
+          # Masukkan folder ke .gitignore agar build system utama tidak error karena nested git
           echo "KernelSU/" >> .gitignore
           echo "susfs4ksu/" >> .gitignore
           
@@ -126,7 +126,6 @@ jobs:
       - name: Final Clean Tree Commit
         run: |
           cd gki/common
-          # Karena KernelSU udah di .gitignore, git add aman
           git add .
           git commit -m "Final clean tree before build" || true
 
@@ -134,7 +133,6 @@ jobs:
         run: |
           cd gki
           echo "Starting kernel build..."
-          # Build jalan, versi KSU aman karena folder .git masih ada
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
