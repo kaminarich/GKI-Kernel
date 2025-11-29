@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSS (Specific KSU)
+name: Aetherium3.1 KSS (Specific KSU)
 
 on:
   workflow_dispatch:
