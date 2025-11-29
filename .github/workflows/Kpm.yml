@@ -8,8 +8,8 @@ on:
         default: 'Linux 5.10.233'
         required: true
       kernel_name:
-        description: 'Custom Kernel Name (Optional)'
-        default: 'Aetherium'
+        description: 'Custom Kernel Name (Leave empty for Default Android)'
+        default: ''
         required: false
       enable_kpm:
         description: 'Enable KPM Patching?'
@@ -73,7 +73,13 @@ jobs:
         PATCH_TOOL_URL="https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux"
         
         echo "=== STARTING GKI BUILDER ==="
-        echo "Target: $TARGET_VERSION"
+        echo "Target Version: $TARGET_VERSION"
+        
+        if [ -z "$USER_KERNEL_NAME" ]; then
+            echo "Kernel Name: [Default Android]"
+        else
+            echo "Kernel Name: -$USER_KERNEL_NAME"
+        fi
         
         mkdir -p "$GKI_ROOT"
         cd "$GKI_ROOT"
@@ -195,6 +201,7 @@ jobs:
         CONFIG_HZ=300
         EOC
         
+        # SET KERNEL NAME (Only if USER_KERNEL_NAME is NOT empty)
         if [ -n "$USER_KERNEL_NAME" ]; then
             if grep -q '^EXTRAVERSION *=' Makefile; then
               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -💠${USER_KERNEL_NAME}/" Makefile
@@ -202,6 +209,7 @@ jobs:
               echo "EXTRAVERSION = -💠${USER_KERNEL_NAME}" >> Makefile
             fi
         fi
+        
         git add .
         git commit -m "Config Update" || true
         
@@ -239,6 +247,7 @@ jobs:
              if [[ $RESPONSE =~ \"id\":\"([a-zA-Z0-9]+)\" ]]; then
                 FILE_ID="${BASH_REMATCH[1]}"
                 echo "::notice title=Download Link::https://pixeldrain.com/u/$FILE_ID"
+                echo "Download Link: https://pixeldrain.com/u/$FILE_ID"
              fi
         else
             echo "Build Failed! Image not found."
