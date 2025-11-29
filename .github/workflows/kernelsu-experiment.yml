@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSS (No Git Delete)
+name: Aetherium3.1 KSS (Specific KSU)
 
 on:
   workflow_dispatch:
@@ -27,7 +27,6 @@ jobs:
 
       - name: Install Dependencies
         run: |
-          # HANYA UPDATE, JANGAN UPGRADE
           sudo apt update
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
@@ -42,28 +41,38 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU (Official) & SUSFS
+      - name: Apply KernelSU (Specific Commit) & SUSFS
         run: |
           cd gki/common
           
-          echo "Installing KernelSU..."
-          # Clone biasa, JANGAN HAPUS .git nya
+          echo "Installing KernelSU Setup Script..."
+          # Jalankan setup script untuk clone dan setup Kconfig/Makefile otomatis
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
+
+          echo "Switching KernelSU to commit b3d5820..."
+          cd KernelSU
+          # Fetch commit spesifik (penting jika clone defaultnya shallow)
+          git fetch origin b3d58209ee204245e982f51dd388fddeb9a2992a
+          # Pindah ke commit target
+          git checkout b3d58209ee204245e982f51dd388fddeb9a2992a
+          cd ..
 
           echo "Installing SUSFS..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
           
+          # Patch Kernel utama dengan SUSFS
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/* include/
           patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
+          # Patch KernelSU dengan SUSFS
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
           patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
           
-          # Pastikan .git masih ada
+          # Cek folder .git
           if [ -d ".git" ]; then
-             echo "AMAN: Folder .git KernelSU masih ada."
+             echo "AMAN: Folder .git KernelSU masih ada (Versi akan terbaca)."
           fi
           cd ..
 
@@ -71,7 +80,6 @@ jobs:
         run: |
           cd gki/common
           # Masukkan folder ke .gitignore biar git utama gak rewel
-          # Jadi kita gak perlu hapus .git di dalamnya
           echo "KernelSU/" >> .gitignore
           echo "susfs4ksu/" >> .gitignore
           
@@ -114,9 +122,9 @@ jobs:
           chmod +x scripts/setlocalversion
 
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.1-Eclipse-KSS/' Makefile
           else
-            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS' >> Makefile
+            echo 'EXTRAVERSION = -💠Aetherium3.1-Eclipse-KSS' >> Makefile
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
@@ -126,7 +134,6 @@ jobs:
       - name: Final Clean Tree Commit
         run: |
           cd gki/common
-          # Karena KernelSU udah di .gitignore, git add aman
           git add .
           git commit -m "Final clean tree before build" || true
 
@@ -134,7 +141,6 @@ jobs:
         run: |
           cd gki
           echo "Starting kernel build..."
-          # Build jalan, versi KSU aman karena folder .git masih ada
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image to PixelDrain
