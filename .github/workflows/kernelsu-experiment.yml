@@ -124,9 +124,9 @@ jobs:
           chmod +x scripts/setlocalversion
 
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.1-Eclipse-KSS/' Makefile
           else
-            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS' >> Makefile
+            echo 'EXTRAVERSION = -💠Aetherium3.1-Eclipse-KSS' >> Makefile
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
