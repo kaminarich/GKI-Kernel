@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 KSS (Fix Makefile)
+name: Build GKI Aetherium3.01 KSS (Fix Linker Error)
 
 on:
   workflow_dispatch:
@@ -59,19 +59,24 @@ jobs:
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
           
-          # === PERBAIKAN DI SINI ===
-          # Kita pakai "|| true" supaya script TIDAK berhenti saat patch Makefile gagal
+          # Gunakan "|| true" untuk bypass error Makefile Hunk #1
           patch -p1 --forward < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
           
-          # Kita tambahkan manual baris yang gagal di-patch (Hunk #1)
-          # Ini memberitahu compiler lokasi header SUSFS
-          echo "Fixing Makefile manually..."
+          # --- PERBAIKAN MANUAL (CRUCIAL) ---
+          echo "Applying Manual Fixes for KernelSU Makefile..."
+          
+          # Fix 1: Header Include path (Mengatasi Hunk #1 yang gagal)
           echo "ccflags-y += -I\$(src)/../../include" >> kernel/Makefile
           
-          # Cek folder .git
-          if [ -d ".git" ]; then
-             echo "AMAN: Folder .git KernelSU masih ada."
-          fi
+          # Fix 2: Object Linking (Mengatasi Error undefined symbol)
+          # Patch SUSFS mendaftarkan ke 'kernelsu-objs' tapi KSU baru pakai 'kernelsu-y'
+          # Kita paksa tambahkan object files ke kernelsu-y:
+          echo "kernelsu-y += sucompat.o" >> kernel/Makefile
+          echo "kernelsu-y += susfs_su.o" >> kernel/Makefile
+          
+          # Cek isi Makefile untuk memastikan
+          tail -n 5 kernel/Makefile
+          
           cd ..
 
       - name: Ignore KernelSU in Main Git
@@ -119,9 +124,9 @@ jobs:
           chmod +x scripts/setlocalversion
 
           if grep -q '^EXTRAVERSION *=' Makefile; then
-            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.1-Eclipse-KSS/' Makefile
+            sed -i 's/^EXTRAVERSION *=.*/EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS/' Makefile
           else
-            echo 'EXTRAVERSION = -💠Aetherium3.1-Eclipse-KSS' >> Makefile
+            echo 'EXTRAVERSION = -💠Aetherium3.0-Eclipse-KSS' >> Makefile
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
