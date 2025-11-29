@@ -1,0 +1,252 @@
+name: GKI Kernel Builder (Auto-Patch)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target Linux Version (Commit Message)'
+        default: 'Linux 5.10.233'
+        required: true
+      kernel_name:
+        description: 'Custom Kernel Name (Optional)'
+        default: 'Aetherium'
+        required: false
+      enable_kpm:
+        description: 'Enable KPM Patching?'
+        type: boolean
+        default: true
+
+jobs:
+  build-kernel:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+    - name: Cleanup Workspace
+      run: |
+        echo "Freeing up space..."
+        sudo rm -rf /usr/share/dotnet
+        sudo rm -rf /opt/ghc
+        sudo rm -rf "/usr/local/share/boost"
+        sudo rm -rf "$AGENT_TOOLSDIRECTORY"
+        echo "Disk space after cleanup:"
+        df -h
+
+    - name: Install Dependencies
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y git curl build-essential bc bison flex libssl-dev \
+        libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+        
+        # Install Repo Tool
+        mkdir -p ~/bin
+        curl https://storage.googleapis.com/git-repo-downloads/repo > ~/bin/repo
+        chmod a+x ~/bin/repo
+        echo "$HOME/bin" >> $GITHUB_PATH
+        
+        # Git Config
+        git config --global user.name "GitHub Action"
+        git config --global user.email "action@github.com"
+
+    - name: Prepare & Build Script
+      run: |
+        cat << 'EOF' > build_script.sh
+        #!/bin/bash
+        set -e
+        
+        # --- INPUT VARIABLES ---
+        TARGET_VERSION="${{ github.event.inputs.target_version }}"
+        USER_KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
+        ENABLE_KPM="${{ github.event.inputs.enable_kpm }}"
+        
+        # --- CONFIG ---
+        BRANCH="common-android12-5.10"
+        MANIFEST="https://android.googlesource.com/kernel/manifest"
+        P_KEY="23c84c82-ce06-4e35-bc1f-69eaa13b9958" # API Key PixelDrain
+        
+        # --- PATHS ---
+        ROOT_DIR=$(pwd)
+        GKI_ROOT="$ROOT_DIR/gki"
+        COMMON_DIR="$GKI_ROOT/common"
+        OUT_IMG_DIR="$GKI_ROOT/out/android12-5.10/common/arch/arm64/boot"
+        PATCH_TOOL_URL="https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux"
+        
+        echo "=== STARTING GKI BUILDER ==="
+        echo "Target: $TARGET_VERSION"
+        
+        mkdir -p "$GKI_ROOT"
+        cd "$GKI_ROOT"
+        
+        # 1. REPO INIT & SYNC
+        if [ ! -d .repo ]; then
+            repo init -u $MANIFEST -b $BRANCH
+        fi
+        echo "Syncing repo (this may take a while)..."
+        repo sync -c -j$(nproc) --force-sync
+        
+        # 2. CHECKOUT TARGET
+        cd "$COMMON_DIR"
+        git reset --hard
+        git clean -fd
+        
+        echo "Searching for commit hash: $TARGET_VERSION..."
+        CHECKOUT_COMMIT=$(git log -1 --format=%H --grep="$TARGET_VERSION")
+        
+        if [ -z "$CHECKOUT_COMMIT" ]; then
+            echo "ERROR: Version '$TARGET_VERSION' not found!"
+            exit 1
+        fi
+        
+        echo "Checkout to: $CHECKOUT_COMMIT"
+        git checkout $CHECKOUT_COMMIT
+        
+        # 3. PATCHING
+        sed -i '2d' build.config.gki || true
+        
+        echo "Applying SukiSU..."
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+        curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+        
+        echo "Applying SUSFS Manual..."
+        rm -rf sus
+        git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus || true
+        cp -r sus/kernel_patches/fs/* fs/ 2>/dev/null || true
+        cp -r sus/kernel_patches/include/* include/ 2>/dev/null || true
+        cp sus/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch . 2>/dev/null || true
+        patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || true
+        
+        # Clean git state
+        rm -rf KernelSU/.git sus/.git
+        git add -A
+        git commit -m "Inject KernelSU & SUSFS" || true
+        
+        # 4. FIX TASK_MMU.C (Advanced Fix)
+        echo "Fixing task_mmu.c..."
+        FILE="fs/proc/task_mmu.c"
+        TMP="/tmp/task_mmu_fix.$$"
+        
+        # Remove top accidental show_pad
+        sed -i '1{/^show_pad:/d}' "$FILE"
+        
+        # Awk Logic to remove bad blocks
+        awk '
+          BEGIN { in=0; buf="" }
+          {
+            if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) {
+              in=1; buf=$0 "\n"; next
+            }
+            if (in) {
+              buf = buf $0 "\n"
+              if ($0 ~ /^#endif/) {
+                if (buf ~ /goto[[:space:]]+show_pad/) {
+                  in=0; buf=""
+                  next
+                } else {
+                  printf "%s", buf
+                  in=0; buf=""
+                  next
+                }
+              }
+              next
+            }
+            print
+          }
+        ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+        
+        # Normalize duplicates
+        count=$(grep -c '^show_pad:$' "$FILE" || true)
+        if [ "$count" -gt 1 ]; then
+          last_ln=$(grep -n '^show_pad:$' "$FILE" | tail -n1 | cut -d: -f1)
+          awk -v keep="$last_ln" 'NR==keep { print; next } /^show_pad:$/ { next } { print }' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+        fi
+        
+        # Ensure existence
+        if ! grep -q '^show_pad:$' "$FILE"; then
+          if grep -q 'show_map_pad_vma' "$FILE"; then
+            LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
+            sed -i "${LINE}ishow_pad:" "$FILE"
+          elif grep -q 'SEQ_PUT_DEC(\"Size:' "$FILE"; then
+            LINE=$(grep -n 'SEQ_PUT_DEC(\"Size:' "$FILE" | head -n1 | cut -d: -f1)
+            sed -i "${LINE}ishow_pad:" "$FILE"
+          else
+            sed -i '1ishow_pad:' "$FILE"
+          fi
+        fi
+        
+        git add "$FILE"
+        git commit -m "Auto-fix show_pad" || true
+        
+        # 5. CONFIG
+        DEFCONFIG="arch/arm64/configs/gki_defconfig"
+        cat <<EOC >> $DEFCONFIG
+        CONFIG_KSU=y
+        CONFIG_KSU_SUSFS=y
+        CONFIG_KSU_SUSFS_SUS_PATH=y
+        CONFIG_KSU_SUSFS_SUS_MOUNT=y
+        CONFIG_KSU_SUSFS_SUS_KSTAT=y
+        CONFIG_KSU_SUSFS_SUS_OVERLAYFS=y
+        CONFIG_KSU_SUSFS_TRY_UMOUNT=y
+        CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+        CONFIG_KSU_SUSFS_ENABLE_LOG=y
+        CONFIG_TCP_CONG_BBR=y
+        CONFIG_DEFAULT_BBR=y
+        CONFIG_HZ_300=y
+        CONFIG_HZ=300
+        EOC
+        
+        if [ -n "$USER_KERNEL_NAME" ]; then
+            if grep -q '^EXTRAVERSION *=' Makefile; then
+              sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -💠${USER_KERNEL_NAME}/" Makefile
+            else
+              echo "EXTRAVERSION = -💠${USER_KERNEL_NAME}" >> Makefile
+            fi
+        fi
+        git add .
+        git commit -m "Config Update" || true
+        
+        # 6. BUILD
+        cd "$GKI_ROOT"
+        echo "Building Kernel..."
+        LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
+        
+        # 7. KPM & UPLOAD
+        if [ "$ENABLE_KPM" == "true" ] && [ -f "$OUT_IMG_DIR/Image" ]; then
+            cd "$OUT_IMG_DIR"
+            echo "Applying KPM..."
+            curl -LSs "$PATCH_TOOL_URL" -o patch_tool
+            chmod +x patch_tool
+            ./patch_tool
+            
+            if [ -f "oImage" ]; then
+                mv -f oImage Image
+                echo "Uploading to PixelDrain..."
+                RESPONSE=$(curl -s -u :$P_KEY -F file=@Image https://pixeldrain.com/api/file)
+                if [[ $RESPONSE =~ \"id\":\"([a-zA-Z0-9]+)\" ]]; then
+                    FILE_ID="${BASH_REMATCH[1]}"
+                    echo "::notice title=Download Link::https://pixeldrain.com/u/$FILE_ID"
+                    echo "Download Link: https://pixeldrain.com/u/$FILE_ID"
+                fi
+            else
+                echo "KPM Patch Failed!"
+                exit 1
+            fi
+        elif [ -f "$OUT_IMG_DIR/Image" ]; then
+             # Upload raw image if KPM disabled
+             cd "$OUT_IMG_DIR"
+             echo "Uploading Unpatched Image..."
+             RESPONSE=$(curl -s -u :$P_KEY -F file=@Image https://pixeldrain.com/api/file)
+             if [[ $RESPONSE =~ \"id\":\"([a-zA-Z0-9]+)\" ]]; then
+                FILE_ID="${BASH_REMATCH[1]}"
+                echo "::notice title=Download Link::https://pixeldrain.com/u/$FILE_ID"
+             fi
+        else
+            echo "Build Failed! Image not found."
+            exit 1
+        fi
+        EOF
+
+    - name: Run Build Script
+      run: |
+        chmod +x build_script.sh
+        bash build_script.sh
