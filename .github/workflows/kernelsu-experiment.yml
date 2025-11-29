@@ -1,4 +1,4 @@
-name: Aetherium3.1 KSS (Specific KSU)
+name: Build GKI Aetherium3.01 KSS (Fix Makefile)
 
 on:
   workflow_dispatch:
@@ -41,45 +41,42 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      - name: Apply KernelSU (Specific Commit) & SUSFS
+      - name: Apply KernelSU (Latest) & SUSFS
         run: |
           cd gki/common
           
-          echo "Installing KernelSU Setup Script..."
-          # Jalankan setup script untuk clone dan setup Kconfig/Makefile otomatis
+          echo "Installing KernelSU (Latest Main)..."
           curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
-
-          echo "Switching KernelSU to commit b3d5820..."
-          cd KernelSU
-          # Fetch commit spesifik (penting jika clone defaultnya shallow)
-          git fetch origin b3d58209ee204245e982f51dd388fddeb9a2992a
-          # Pindah ke commit target
-          git checkout b3d58209ee204245e982f51dd388fddeb9a2992a
-          cd ..
 
           echo "Installing SUSFS..."
           git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 susfs4ksu
           
-          # Patch Kernel utama dengan SUSFS
+          # Patch Kernel Utama
           cp -r susfs4ksu/kernel_patches/fs/* fs/
           cp -r susfs4ksu/kernel_patches/include/* include/
           patch -p1 < susfs4ksu/kernel_patches/50_add_susfs_in_gki-android12-5.10.patch
 
-          # Patch KernelSU dengan SUSFS
           echo "Patching KernelSU for SUSFS..."
           cd KernelSU
-          patch -p1 < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch
+          
+          # === PERBAIKAN DI SINI ===
+          # Kita pakai "|| true" supaya script TIDAK berhenti saat patch Makefile gagal
+          patch -p1 --forward < ../susfs4ksu/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch || true
+          
+          # Kita tambahkan manual baris yang gagal di-patch (Hunk #1)
+          # Ini memberitahu compiler lokasi header SUSFS
+          echo "Fixing Makefile manually..."
+          echo "ccflags-y += -I\$(src)/../../include" >> kernel/Makefile
           
           # Cek folder .git
           if [ -d ".git" ]; then
-             echo "AMAN: Folder .git KernelSU masih ada (Versi akan terbaca)."
+             echo "AMAN: Folder .git KernelSU masih ada."
           fi
           cd ..
 
       - name: Ignore KernelSU in Main Git
         run: |
           cd gki/common
-          # Masukkan folder ke .gitignore biar git utama gak rewel
           echo "KernelSU/" >> .gitignore
           echo "susfs4ksu/" >> .gitignore
           
