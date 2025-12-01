@@ -15,7 +15,7 @@ jobs:
       - name: Checkout Repository
         uses: actions/checkout@v4
         with:
-          ref: sukisu-update  # FOKUS ke branch kamu
+          ref: update-sukisu  # FOKUS ke branch kamu
           fetch-depth: 0      # Ambil seluruh history agar bisa di-merge
 
       - name: Setup Git Identity
@@ -47,5 +47,5 @@ jobs:
       - name: Push Changes
         if: steps.merge.outputs.status == 'success'
         run: |
-          echo "Pushing changes to sukisu-update..."
-          git push origin sukisu-update
+          echo "Pushing changes to update-sukisu..."
+          git push origin update-sukisu
