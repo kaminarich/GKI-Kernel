@@ -1,0 +1,170 @@
+name: Manual Build GKI 5.15 (No Bazel)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target Version (Commit Hash / Tag)'
+        default: 'android12-5.15.148_r00'
+        required: true
+      kernel_name:
+        description: 'Kernel Name (Optional)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-codeql: 'true'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git curl build-essential bc bison flex libssl-dev \
+            libelf-dev libncurses-dev lld python3
+
+      - name: Clone Kernel Source (5.15)
+        run: |
+          echo "Cloning GKI 5.15..."
+          # Clone depth 1 agar cepat, lalu fetch jika perlu history
+          git clone https://android.googlesource.com/kernel/common -b android12-5.15 --depth 1 source
+          cd source
+          # Fetch full history agar bisa checkout versi spesifik jika input bukan branch head
+          git fetch --unshallow || true
+
+      - name: Setup Clang (Android 12/5.15 Standard)
+        run: |
+          mkdir -p toolchain/clang
+          cd toolchain/clang
+          echo "Downloading Clang r416183b (Standard for GKI 5.15)..."
+          # URL Clang official Google untuk Android 12 (Kernel 5.15)
+          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-12.1.0_r27/clang-r416183b1.tar.gz" | tar -xz
+          
+      - name: Checkout Target Version
+        run: |
+          cd source
+          TARGET="${{ github.event.inputs.target_version }}"
+          echo "Checking out: $TARGET"
+          
+          # Coba checkout sebagai commit hash atau tag
+          git checkout $TARGET || echo "Commit not found in depth, trying fallback..."
+
+      - name: Apply SukiSU & SUSFS (5.15)
+        run: |
+          cd source
+          echo "Downloading SukiSU Setup..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          
+          echo "Cloning SUSFS 5.15 patches..."
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.15 sus_temp
+          
+          cp -r sus_temp/kernel_patches/fs/* fs/
+          cp -r sus_temp/kernel_patches/include/* include/
+          cp sus_temp/kernel_patches/50_add_susfs_in_gki-android12-5.15.patch .
+          
+          echo "Applying SUSFS Patch..."
+          patch -p1 < 50_add_susfs_in_gki-android12-5.15.patch
+          
+          rm -rf sus_temp
+
+      - name: Fix task_mmu.c (SukiSU Fix)
+        run: |
+          cd source
+          # Fix sederhana untuk error show_pad yang sering muncul di SukiSU
+          sed -i '/show_pad:/d' fs/proc/task_mmu.c
+          sed -i '1ishow_pad:' fs/proc/task_mmu.c
+
+      - name: Build Kernel Script
+        run: |
+          # Setting Variable
+          export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
+          export ARCH=arm64
+          export CLANG_TRIPLE=aarch64-linux-gnu-
+          export CROSS_COMPILE=aarch64-linux-gnu-
+          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
+          export LLVM=1
+          
+          cd source
+          
+          echo "Generating Config..."
+          make O=out gki_defconfig
+          
+          echo "Modifying Config (LTO & KPM)..."
+          # Script konfigurasi sesuai request kamu
+          scripts/config --file out/.config \
+            -e LTO_CLANG \
+            -d LTO_NONE \
+            -e LTO_CLANG_THIN \
+            -d LTO_CLANG_FULL \
+            -e THINLTO \
+            -e KPM \
+            -e CONFIG_KSU \
+            -e CONFIG_KSU_SUSFS \
+            -e CONFIG_KSU_SUSFS_SUS_PATH \
+            -e CONFIG_KSU_SUSFS_SUS_MOUNT
+            
+          # Tambahan config wajib GKI agar boot
+          scripts/config --file out/.config --set-val CONFIG_HZ 300
+          
+          # Set Nama Kernel (Optional)
+          NAME="${{ github.event.inputs.kernel_name }}"
+          if [ ! -z "$NAME" ]; then
+             sed -i "s/^EXTRAVERSION =.*/EXTRAVERSION = -$NAME/" Makefile
+          fi
+
+          echo "Building Image..."
+          # Build process dengan Clang
+          make -j$(nproc --all) \
+              O=out \
+              CC=clang \
+              LD=ld.lld \
+              AR=llvm-ar \
+              NM=llvm-nm \
+              OBJCOPY=llvm-objcopy \
+              OBJDUMP=llvm-objdump \
+              STRIP=llvm-strip \
+              Image
+              
+      - name: Run KPM Patch & Rename
+        run: |
+          cd source/out/arch/arm64/boot
+          
+          if [ ! -f Image ]; then
+             echo "Build Failed! Image not found."
+             exit 1
+          fi
+          
+          echo "Applying KPM Binary Patch..."
+          curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
+          chmod +x patch
+          ./patch
+          
+          # Rename oImage (patched) to Image
+          if [ -f oImage ]; then
+             mv -f oImage Image
+             echo "KPM Patch Applied Successfully."
+          else
+             echo "KPM Patch Failed (oImage not created)."
+             exit 1
+          fi
+
+      - name: Upload Image
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-GKI-5.15
+          path: source/out/arch/arm64/boot/Image
+
+      - name: Upload to PixelDrain
+        run: |
+          cd source/out/arch/arm64/boot
+          curl -T Image -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 https://pixeldrain.com/api/file
+          
