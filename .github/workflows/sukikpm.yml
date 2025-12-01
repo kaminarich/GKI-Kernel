@@ -1,4 +1,4 @@
-name: Build GKI Aetherium3.01 Suki
+name: Suki KPM
 
 on:
   workflow_dispatch:
