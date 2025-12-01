@@ -1,4 +1,4 @@
-name: Build GKI 5.15 (Fix task_mmu)
+name: Build GKI 5.15 (Fix BTF & Pahole)
 
 on:
   workflow_dispatch:
@@ -30,12 +30,20 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
+          # Tambahkan dwarves (paket yg berisi pahole) tapi nanti kita update manual
           sudo apt install -y git curl build-essential bc bison flex libssl-dev \
-            libelf-dev libncurses-dev lld python3
+            libelf-dev libncurses-dev lld python3 dwarves
           
-          # Setup Git Config untuk commit otomatis saat patching
           git config --global user.name "Bot"
           git config --global user.email "bot@example.com"
+
+      - name: Fix Pahole Version (Clang 19 Support)
+        run: |
+          echo "Updating Pahole to v1.25 for Clang 19 compatibility..."
+          # Download Pahole v1.25 dari repo Ubuntu Universe (yang lebih baru)
+          wget http://mirrors.kernel.org/ubuntu/pool/universe/d/dwarves-dfsg/dwarves_1.25-0ubuntu1_amd64.deb
+          sudo dpkg -i dwarves_1.25-0ubuntu1_amd64.deb
+          pahole --version
 
       - name: Clone Kernel Source (Android13-5.15)
         run: |
@@ -83,10 +91,8 @@ jobs:
           FILE="fs/proc/task_mmu.c"
           TMP="/tmp/task_mmu_fix.$$"
           
-          # 1. Hapus jika ada show_pad di baris 1 (Fix error sebelumnya)
           sed -i '1{/^show_pad:/d}' "$FILE"
           
-          # 2. Coba hapus blok goto show_pad jika ada logic conflict
           awk '
             BEGIN { in=0; buf="" }
             {
@@ -111,19 +117,13 @@ jobs:
             }
           ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
           
-          # 3. Masukkan label show_pad: di tempat yang BENAR (di dalam fungsi)
           if ! grep -q '^show_pad:$' "$FILE"; then
             if grep -q 'show_map_pad_vma' "$FILE"; then
-              # Masukkan sebelum show_map_pad_vma (paling aman)
               LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
               sed -i "${LINE}ishow_pad:" "$FILE"
-              echo "Injecting show_pad before show_map_pad_vma at line $LINE"
             elif grep -q 'SEQ_PUT_DEC(\"Size:' "$FILE"; then
               LINE=$(grep -n 'SEQ_PUT_DEC(\"Size:' "$FILE" | head -n1 | cut -d: -f1)
               sed -i "${LINE}ishow_pad:" "$FILE"
-              echo "Injecting show_pad before SEQ_PUT_DEC at line $LINE"
-            else
-              echo "WARNING: Could not find good place for show_pad, skipping injection."
             fi
           fi
           
@@ -142,12 +142,20 @@ jobs:
           make O=out gki_defconfig
           
           echo "Modifying Config..."
+          
+          # CATATAN: Saya TIDAK mematikan CONFIG_DEBUG_INFO_BTF
+          # Karena kita sudah install pahole v1.25 di atas.
+          
+          # LTO Settings
           scripts/config --file out/.config \
             -e LTO_CLANG \
             -d LTO_NONE \
             -e LTO_CLANG_THIN \
             -d LTO_CLANG_FULL \
-            -e THINLTO \
+            -e THINLTO
+            
+          # KPM & SukiSU Settings
+          scripts/config --file out/.config \
             -e KPM \
             -e CONFIG_KSU \
             -e CONFIG_KSU_SUSFS \
@@ -170,7 +178,7 @@ jobs:
           cd source
           echo "Building Image using Clang 19..."
           
-          # Tambahkan NOWERROR=1 untuk mengabaikan warning kecil dari Clang 19
+          # NOWERROR=1 PENTING karena Clang 19 mungkin rewel soal BTF warning
           make -j$(nproc --all) \
               O=out \
               CC=clang \
