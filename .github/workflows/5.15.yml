@@ -5,7 +5,7 @@ on:
     inputs:
       target_version:
         description: 'Target Version (Commit Hash / Tag)'
-        default: 'android12-5.15.148_r00'
+        default: 'android13-5.15'
         required: true
       kernel_name:
         description: 'Kernel Name (Optional)'
