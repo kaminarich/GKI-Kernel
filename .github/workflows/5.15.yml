@@ -1,11 +1,11 @@
-name: Manual Build GKI 5.15 (No Bazel)
+name: Build GKI 5.15 (Image Only)
 
 on:
   workflow_dispatch:
     inputs:
       target_version:
-        description: 'Target Version (Commit Hash / Tag)'
-        default: 'android13-5.15'
+        description: 'Target Version (Commit Hash / Tag / Branch)'
+        default: 'android12-5.15'
         required: true
       kernel_name:
         description: 'Kernel Name (Optional)'
@@ -14,6 +14,7 @@ on:
 
 jobs:
   build:
+    name: Build Kernel 5.15
     runs-on: ubuntu-22.04
 
     steps:
@@ -21,6 +22,7 @@ jobs:
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
+          swap-size-mb: 10240
           remove-dotnet: 'true'
           remove-android: 'true'
           remove-codeql: 'true'
@@ -34,10 +36,10 @@ jobs:
       - name: Clone Kernel Source (5.15)
         run: |
           echo "Cloning GKI 5.15..."
-          # Clone depth 1 agar cepat, lalu fetch jika perlu history
+          # Clone depth 1 agar cepat
           git clone https://android.googlesource.com/kernel/common -b android12-5.15 --depth 1 source
           cd source
-          # Fetch full history agar bisa checkout versi spesifik jika input bukan branch head
+          # Fetch sedikit history agar bisa checkout commit tertentu jika perlu
           git fetch --unshallow || true
 
       - name: Setup Clang (Android 12/5.15 Standard)
@@ -45,7 +47,7 @@ jobs:
           mkdir -p toolchain/clang
           cd toolchain/clang
           echo "Downloading Clang r416183b (Standard for GKI 5.15)..."
-          # URL Clang official Google untuk Android 12 (Kernel 5.15)
+          # Menggunakan Clang official Google untuk Android 12
           curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-12.1.0_r27/clang-r416183b1.tar.gz" | tar -xz
           
       - name: Checkout Target Version
@@ -54,10 +56,10 @@ jobs:
           TARGET="${{ github.event.inputs.target_version }}"
           echo "Checking out: $TARGET"
           
-          # Coba checkout sebagai commit hash atau tag
-          git checkout $TARGET || echo "Commit not found in depth, trying fallback..."
+          # Jika gagal checkout (misal input branch/tag salah), lanjut ke latest
+          git checkout $TARGET || echo "Target not found, staying on latest commit."
 
-      - name: Apply SukiSU & SUSFS (5.15)
+      - name: Apply SukiSU & SUSFS Patches
         run: |
           cd source
           echo "Downloading SukiSU Setup..."
@@ -67,6 +69,7 @@ jobs:
           echo "Cloning SUSFS 5.15 patches..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.15 sus_temp
           
+          # Copy file patch SUSFS
           cp -r sus_temp/kernel_patches/fs/* fs/
           cp -r sus_temp/kernel_patches/include/* include/
           cp sus_temp/kernel_patches/50_add_susfs_in_gki-android12-5.15.patch .
@@ -79,13 +82,13 @@ jobs:
       - name: Fix task_mmu.c (SukiSU Fix)
         run: |
           cd source
-          # Fix sederhana untuk error show_pad yang sering muncul di SukiSU
+          # Fix sederhana untuk mencegah error show_pad
           sed -i '/show_pad:/d' fs/proc/task_mmu.c
           sed -i '1ishow_pad:' fs/proc/task_mmu.c
 
-      - name: Build Kernel Script
+      - name: Configure Kernel
         run: |
-          # Setting Variable
+          # Set Environment Variables
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
           export ARCH=arm64
           export CLANG_TRIPLE=aarch64-linux-gnu-
@@ -95,34 +98,44 @@ jobs:
           
           cd source
           
-          echo "Generating Config..."
+          echo "Generating GKI Defconfig..."
           make O=out gki_defconfig
           
-          echo "Modifying Config (LTO & KPM)..."
-          # Script konfigurasi sesuai request kamu
+          echo "Modifying Config (LTO, KPM, HZ)..."
+          # Mengaktifkan ThinLTO (Performance)
           scripts/config --file out/.config \
             -e LTO_CLANG \
             -d LTO_NONE \
             -e LTO_CLANG_THIN \
             -d LTO_CLANG_FULL \
-            -e THINLTO \
+            -e THINLTO
+            
+          # Mengaktifkan KPM & KSU Settings
+          scripts/config --file out/.config \
             -e KPM \
             -e CONFIG_KSU \
             -e CONFIG_KSU_SUSFS \
             -e CONFIG_KSU_SUSFS_SUS_PATH \
             -e CONFIG_KSU_SUSFS_SUS_MOUNT
             
-          # Tambahan config wajib GKI agar boot
+          # Set HZ ke 300 (Wajib untuk GKI)
           scripts/config --file out/.config --set-val CONFIG_HZ 300
           
-          # Set Nama Kernel (Optional)
+          # Set Custom Name
           NAME="${{ github.event.inputs.kernel_name }}"
           if [ ! -z "$NAME" ]; then
              sed -i "s/^EXTRAVERSION =.*/EXTRAVERSION = -$NAME/" Makefile
           fi
 
+      - name: Build Kernel Image
+        run: |
+          export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
+          export ARCH=arm64
+          export LLVM=1
+          
+          cd source
           echo "Building Image..."
-          # Build process dengan Clang
+          
           make -j$(nproc --all) \
               O=out \
               CC=clang \
@@ -133,17 +146,17 @@ jobs:
               OBJDUMP=llvm-objdump \
               STRIP=llvm-strip \
               Image
-              
-      - name: Run KPM Patch & Rename
+
+      - name: Apply KPM Binary Patch
         run: |
           cd source/out/arch/arm64/boot
           
           if [ ! -f Image ]; then
-             echo "Build Failed! Image not found."
+             echo "::error::Build Failed! Image not found."
              exit 1
           fi
           
-          echo "Applying KPM Binary Patch..."
+          echo "Applying KPM Patch..."
           curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
           chmod +x patch
           ./patch
@@ -153,18 +166,18 @@ jobs:
              mv -f oImage Image
              echo "KPM Patch Applied Successfully."
           else
-             echo "KPM Patch Failed (oImage not created)."
+             echo "::error::KPM Patch Failed (oImage not created)."
              exit 1
           fi
 
-      - name: Upload Image
+      - name: Upload Image to Artifacts
         uses: actions/upload-artifact@v4
         with:
           name: Image-GKI-5.15
           path: source/out/arch/arm64/boot/Image
 
-      - name: Upload to PixelDrain
+      - name: Upload Image to PixelDrain
         run: |
           cd source/out/arch/arm64/boot
+          echo "Uploading Image to PixelDrain..."
           curl -T Image -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 https://pixeldrain.com/api/file
-          
