@@ -1,4 +1,4 @@
-name: Suki KPM
+name: Build GKI Aetherium3.01 Suki
 
 on:
   workflow_dispatch:
@@ -98,6 +98,64 @@ jobs:
           git add KernelSU
           git add sus
           git commit -m "Inject KernelSU & SUSFS manually" || true
+
+      - name: Fix task_mmu.c (Advanced Fix)
+        run: |
+          cd gki/common
+          echo "Fixing task_mmu.c..."
+          FILE="fs/proc/task_mmu.c"
+          TMP="/tmp/task_mmu_fix.$$"
+          
+          # Remove top accidental show_pad
+          sed -i '1{/^show_pad:/d}' "$FILE"
+          
+          # Awk Logic to remove bad blocks
+          awk '
+            BEGIN { in=0; buf="" }
+            {
+              if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) {
+                in=1; buf=$0 "\n"; next
+              }
+              if (in) {
+                buf = buf $0 "\n"
+                if ($0 ~ /^#endif/) {
+                  if (buf ~ /goto[[:space:]]+show_pad/) {
+                    in=0; buf=""
+                    next
+                  } else {
+                    printf "%s", buf
+                    in=0; buf=""
+                    next
+                  }
+                }
+                next
+              }
+              print
+            }
+          ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+          
+          # Normalize duplicates
+          count=$(grep -c '^show_pad:$' "$FILE" || true)
+          if [ "$count" -gt 1 ]; then
+            last_ln=$(grep -n '^show_pad:$' "$FILE" | tail -n1 | cut -d: -f1)
+            awk -v keep="$last_ln" 'NR==keep { print; next } /^show_pad:$/ { next } { print }' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+          fi
+          
+          # Ensure existence
+          if ! grep -q '^show_pad:$' "$FILE"; then
+            if grep -q 'show_map_pad_vma' "$FILE"; then
+              LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
+              sed -i "${LINE}ishow_pad:" "$FILE"
+            elif grep -q 'SEQ_PUT_DEC(\"Size:' "$FILE"; then
+              LINE=$(grep -n 'SEQ_PUT_DEC(\"Size:' "$FILE" | head -n1 | cut -d: -f1)
+              sed -i "${LINE}ishow_pad:" "$FILE"
+            else
+              sed -i '1ishow_pad:' "$FILE"
+            fi
+          fi
+          
+          git add "$FILE"
+          git commit -m "Auto-fix show_pad" || true
 
       - name: Add Custom Network & FS Configs
         run: |
