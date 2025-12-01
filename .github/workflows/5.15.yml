@@ -1,4 +1,4 @@
-name: Build GKI 5.15 (Ubuntu 24.04 - Native Pahole)
+name: Build GKI 5.15 (Final Custom Name & Upload)
 
 on:
   workflow_dispatch:
@@ -15,7 +15,6 @@ on:
 jobs:
   build:
     name: Build Kernel 5.15
-    # PERUBAHAN UTAMA: Pakai Ubuntu 24.04 agar dapat Pahole v1.25 native
     runs-on: ubuntu-24.04
 
     steps:
@@ -31,15 +30,11 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          # Di Ubuntu 24.04, paket 'dwarves' sudah versi 1.25 (Kompatibel Clang 19)
           sudo apt install -y git curl build-essential bc bison flex libssl-dev \
             libelf-dev libncurses-dev lld python3 dwarves
           
           git config --global user.name "Bot"
           git config --global user.email "bot@example.com"
-          
-          echo "Checking Pahole version..."
-          pahole --version
 
       - name: Clone Kernel Source (Android13-5.15)
         run: |
@@ -89,21 +84,22 @@ jobs:
           
           sed -i '1{/^show_pad:/d}' "$FILE"
           
+          # AWK FIX: Menggunakan variabel 'inside' agar tidak error syntax
           awk '
-            BEGIN { in=0; buf="" }
+            BEGIN { inside=0; buf="" }
             {
               if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) {
-                in=1; buf=$0 "\n"; next
+                inside=1; buf=$0 "\n"; next
               }
-              if (in) {
+              if (inside) {
                 buf = buf $0 "\n"
                 if ($0 ~ /^#endif/) {
                   if (buf ~ /goto[[:space:]]+show_pad/) {
-                    in=0; buf=""
+                    inside=0; buf=""
                     next
                   } else {
                     printf "%s", buf
-                    in=0; buf=""
+                    inside=0; buf=""
                     next
                   }
                 }
@@ -126,6 +122,29 @@ jobs:
           git add "$FILE"
           git commit -m "Auto-fix show_pad logic" || true
 
+      - name: Set Kernel EXTRAVERSION (Custom Name)
+        run: |
+          # Masuk ke folder source dulu
+          cd source
+          
+          # Hapus script setlocalversion agar tidak nambah tanda '+' otomatis
+          echo "" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          
+          CUSTOM_NAME="${{ github.event.inputs.kernel_name }}"
+
+          if [ -n "$CUSTOM_NAME" ]; then
+             echo "Using custom kernel name: $CUSTOM_NAME"
+             # Edit Makefile langsung
+             if grep -q '^EXTRAVERSION *=' Makefile; then
+               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$CUSTOM_NAME/" Makefile
+             else
+               echo "EXTRAVERSION = -$CUSTOM_NAME" >> Makefile
+             fi
+          else
+             echo "Kernel name is empty. Using default Android version."
+          fi
+
       - name: Configure Kernel
         run: |
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
@@ -138,8 +157,6 @@ jobs:
           make O=out gki_defconfig
           
           echo "Modifying Config..."
-          
-          # BTF TETAP AKTIF (Enabled) karena kita pakai Ubuntu 24.04 (Pahole v1.25)
           
           # LTO Settings
           scripts/config --file out/.config \
@@ -158,11 +175,6 @@ jobs:
             -e CONFIG_KSU_SUSFS_SUS_MOUNT
             
           scripts/config --file out/.config --set-val CONFIG_HZ 300
-          
-          NAME="${{ github.event.inputs.kernel_name }}"
-          if [ ! -z "$NAME" ]; then
-             sed -i "s/^EXTRAVERSION =.*/EXTRAVERSION = -$NAME/" Makefile
-          fi
 
       - name: Build Kernel Image
         run: |
@@ -211,4 +223,8 @@ jobs:
         run: |
           cd source/out/arch/arm64/boot
           echo "Uploading Image to PixelDrain..."
-          curl -T Image -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 https://pixeldrain.com/api/file
+          
+          # Upload dengan method Multipart form data (-F) sesuai request
+          curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
+            -F file=@Image \
+            https://pixeldrain.com/api/file
