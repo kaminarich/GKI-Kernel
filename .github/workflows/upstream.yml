@@ -1,0 +1,51 @@
+name: Sync Upstream Kernel
+
+on:
+  workflow_dispatch: # Supaya bisa dijalankan manual lewat tombol
+  schedule:
+    - cron: '0 0 * * 1' # (Opsional) Jalan otomatis tiap hari Senin
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # Penting: Izin supaya bot bisa push/update repo
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: sukisu-update  # FOKUS ke branch kamu
+          fetch-depth: 0      # Ambil seluruh history agar bisa di-merge
+
+      - name: Setup Git Identity
+        run: |
+          git config --global user.name "GitHub Actions Bot"
+          git config --global user.email "actions@github.com"
+
+      - name: Add Upstream & Fetch
+        run: |
+          echo "Menambahkan remote upstream..."
+          git remote add upstream https://android.googlesource.com/kernel/common
+          
+          echo "Mengambil data terbaru dari android12-5.10..."
+          git fetch upstream android12-5.10
+
+      - name: Merge Upstream
+        id: merge
+        run: |
+          echo "Mencoba menggabungkan update..."
+          # Mencoba merge. Jika konflik, step ini akan error & berhenti.
+          if git merge upstream/android12-5.10; then
+            echo "Merge berhasil!"
+            echo "status=success" >> $GITHUB_OUTPUT
+          else
+            echo "::error::TERJADI CONFLICT! Tidak bisa auto-merge. Silakan merge manual di PC."
+            exit 1
+          fi
+
+      - name: Push Changes
+        if: steps.merge.outputs.status == 'success'
+        run: |
+          echo "Pushing changes to sukisu-update..."
+          git push origin sukisu-update
