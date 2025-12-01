@@ -1,4 +1,4 @@
-name: Build GKI 5.15 (Fix BTF & Pahole)
+name: Build GKI 5.15 (Ubuntu 24.04 - Native Pahole)
 
 on:
   workflow_dispatch:
@@ -15,7 +15,8 @@ on:
 jobs:
   build:
     name: Build Kernel 5.15
-    runs-on: ubuntu-22.04
+    # PERUBAHAN UTAMA: Pakai Ubuntu 24.04 agar dapat Pahole v1.25 native
+    runs-on: ubuntu-24.04
 
     steps:
       - name: Maximize Build Space
@@ -30,19 +31,14 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update
-          # Tambahkan dwarves (paket yg berisi pahole) tapi nanti kita update manual
+          # Di Ubuntu 24.04, paket 'dwarves' sudah versi 1.25 (Kompatibel Clang 19)
           sudo apt install -y git curl build-essential bc bison flex libssl-dev \
             libelf-dev libncurses-dev lld python3 dwarves
           
           git config --global user.name "Bot"
           git config --global user.email "bot@example.com"
-
-      - name: Fix Pahole Version (Clang 19 Support)
-        run: |
-          echo "Updating Pahole to v1.25 for Clang 19 compatibility..."
-          # Download Pahole v1.25 dari repo Ubuntu Universe (yang lebih baru)
-          wget http://mirrors.kernel.org/ubuntu/pool/universe/d/dwarves-dfsg/dwarves_1.25-0ubuntu1_amd64.deb
-          sudo dpkg -i dwarves_1.25-0ubuntu1_amd64.deb
+          
+          echo "Checking Pahole version..."
           pahole --version
 
       - name: Clone Kernel Source (Android13-5.15)
@@ -143,8 +139,7 @@ jobs:
           
           echo "Modifying Config..."
           
-          # CATATAN: Saya TIDAK mematikan CONFIG_DEBUG_INFO_BTF
-          # Karena kita sudah install pahole v1.25 di atas.
+          # BTF TETAP AKTIF (Enabled) karena kita pakai Ubuntu 24.04 (Pahole v1.25)
           
           # LTO Settings
           scripts/config --file out/.config \
@@ -178,7 +173,6 @@ jobs:
           cd source
           echo "Building Image using Clang 19..."
           
-          # NOWERROR=1 PENTING karena Clang 19 mungkin rewel soal BTF warning
           make -j$(nproc --all) \
               O=out \
               CC=clang \
