@@ -1,4 +1,4 @@
-name: Suki kpm
+name: Suki KPM
 
 on:
   workflow_dispatch:
@@ -7,6 +7,10 @@ on:
         description: 'Target Linux Version (Commit Message)'
         default: 'Linux 5.10.233'
         required: true
+      kernel_name:
+        description: 'Kernel Name (Kosongkan untuk Default)'
+        required: false
+        default: ''
 
 jobs:
   build:
@@ -86,15 +90,10 @@ jobs:
       - name: Fix KernelSU and sus directory state
         run: |
           cd gki/common
-          # Hapus folder .git agar tidak dianggap sebagai submodule
           rm -rf KernelSU/.git
           rm -rf sus/.git
-          
-          # Gunakan --ignore-unmatch agar tidak error false alarm di log
           git rm --cached --ignore-unmatch -r KernelSU
           git rm --cached --ignore-unmatch -r sus
-          
-          # Tambahkan kembali sebagai file biasa
           git add KernelSU
           git add sus
           git commit -m "Inject KernelSU & SUSFS manually" || true
@@ -106,10 +105,8 @@ jobs:
           FILE="fs/proc/task_mmu.c"
           TMP="/tmp/task_mmu_fix.$$"
           
-          # Remove top accidental show_pad
           sed -i '1{/^show_pad:/d}' "$FILE"
           
-          # Awk Logic to remove bad blocks
           awk '
             BEGIN { in=0; buf="" }
             {
@@ -134,14 +131,12 @@ jobs:
             }
           ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
           
-          # Normalize duplicates
           count=$(grep -c '^show_pad:$' "$FILE" || true)
           if [ "$count" -gt 1 ]; then
             last_ln=$(grep -n '^show_pad:$' "$FILE" | tail -n1 | cut -d: -f1)
             awk -v keep="$last_ln" 'NR==keep { print; next } /^show_pad:$/ { next } { print }' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
           fi
           
-          # Ensure existence
           if ! grep -q '^show_pad:$' "$FILE"; then
             if grep -q 'show_map_pad_vma' "$FILE"; then
               LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
@@ -157,9 +152,8 @@ jobs:
           git add "$FILE"
           git commit -m "Auto-fix show_pad" || true
 
-      - name: Add Custom Network & FS Configs
+      - name: Add Custom Network, FS & KPM Configs
         run: |
-          # Set path ke file config
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           
           echo "Injecting custom configs to $DEFCONFIG"
@@ -175,7 +169,27 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
+          # Enable SukiSU KPM
           echo "CONFIG_KPM=y" >> $DEFCONFIG
+
+      - name: Set Kernel EXTRAVERSION (Optional)
+        run: |
+          cd gki/common
+          echo "" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          
+          CUSTOM_NAME="${{ github.event.inputs.kernel_name }}"
+
+          if [ -n "$CUSTOM_NAME" ]; then
+             echo "Using custom kernel name: $CUSTOM_NAME"
+             if grep -q '^EXTRAVERSION *=' Makefile; then
+               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$CUSTOM_NAME/" Makefile
+             else
+               echo "EXTRAVERSION = -$CUSTOM_NAME" >> Makefile
+             fi
+          else
+             echo "Kernel name is empty. Using default Android version."
+          fi
 
       - name: Append CONFIG_HZ_300 to defconfig
         run: |
@@ -194,27 +208,19 @@ jobs:
 
       - name: Apply KPM Patch
         run: |
-          # Masuk ke folder output dimana Image berada
           cd gki/out/android12-5.10/common/arch/arm64/boot/
-          
           if [ -f Image ]; then
             echo "Image found, applying KPM patch..."
-            
-            # Download dan jalankan patcher
             curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
             chmod 777 patch
             ./patch
-            
-            # Rename hasil patch (oImage) menjadi Image kembali agar terupload
             if [ -f oImage ]; then
               mv -f oImage Image
-              echo "KPM Patch applied successfully."
               ls -lh Image
             else
-              echo "Error: oImage not found after patching!"
+              echo "Error: oImage not found!"
               exit 1
             fi
-            
           else
             echo "Image file not found. Skipping KPM patch."
           fi
