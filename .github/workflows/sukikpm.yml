@@ -2,6 +2,11 @@ name: Build GKI Aetherium3.01 Suki
 
 on:
   workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target Linux Version (Commit Message)'
+        default: 'Linux 5.10.233'
+        required: true
 
 jobs:
   build:
@@ -31,11 +36,35 @@ jobs:
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
 
-      - name: Create and Init GKI Source (Shallow)
+      - name: Create and Init GKI Source
         run: |
           mkdir gki && cd gki
-          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
+          # Depth=1 dihapus agar kita bisa mencari commit history (versi linux)
+          repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
+
+      - name: Checkout Specific Kernel Version
+        run: |
+          cd gki/common
+          TARGET_VERSION="${{ github.event.inputs.target_version }}"
+          
+          echo "Preparing to checkout: $TARGET_VERSION"
+          
+          # Bersihkan state git sebelum mencari commit
+          git reset --hard
+          git clean -fd
+          
+          echo "Searching for commit hash..."
+          CHECKOUT_COMMIT=$(git log -1 --format=%H --grep="$TARGET_VERSION")
+          
+          if [ -z "$CHECKOUT_COMMIT" ]; then
+            echo "WARNING: Version '$TARGET_VERSION' not found in git history!"
+            echo "Falling back to latest commit."
+          else
+            echo "Found commit: $CHECKOUT_COMMIT"
+            git checkout $CHECKOUT_COMMIT
+            echo "Successfully checked out to $TARGET_VERSION"
+          fi
 
       - name: Delete Line 2 in build.config.gki
         run: |
@@ -88,6 +117,10 @@ jobs:
           echo "CONFIG_TCP_CONG_WESTWOOD=n" >> $DEFCONFIG
           echo "CONFIG_TCP_CONG_HTCP=n" >> $DEFCONFIG 
           echo "CONFIG_DEFAULT_BBR=y" >> $DEFCONFIG
+
+      - name: Append CONFIG_HZ_300 to defconfig
+        run: |
+          echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
 
       - name: Final Clean Tree Commit
         run: |
