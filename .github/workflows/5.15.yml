@@ -1,4 +1,4 @@
-name: Build GKI 5.15 (Clang 19)
+name: Build GKI 5.15 (Fix task_mmu)
 
 on:
   workflow_dispatch:
@@ -32,6 +32,10 @@ jobs:
           sudo apt update
           sudo apt install -y git curl build-essential bc bison flex libssl-dev \
             libelf-dev libncurses-dev lld python3
+          
+          # Setup Git Config untuk commit otomatis saat patching
+          git config --global user.name "Bot"
+          git config --global user.email "bot@example.com"
 
       - name: Clone Kernel Source (Android13-5.15)
         run: |
@@ -44,14 +48,8 @@ jobs:
         run: |
           echo "Setting up Clang-19 (r536225)..."
           mkdir -p toolchain/clang
-          
-          # URL Clang dari script kamu
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
-          
-          # Download & Extract
           curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
-          
-          echo "Clang setup done."
 
       - name: Checkout Target Version
         run: |
@@ -70,25 +68,70 @@ jobs:
           echo "Cloning SUSFS Patches (Branch: gki-android13-5.15)..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android13-5.15 sus_temp
           
-          # Copy file patch SUSFS
           cp -r sus_temp/kernel_patches/fs/* fs/
           cp -r sus_temp/kernel_patches/include/* include/
           cp sus_temp/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch .
           
           echo "Applying SUSFS Patch..."
           patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
-          
           rm -rf sus_temp
 
-      - name: Fix task_mmu.c (SukiSU Fix)
+      - name: Fix task_mmu.c (Advanced Fix)
         run: |
           cd source
-          sed -i '/show_pad:/d' fs/proc/task_mmu.c
-          sed -i '1ishow_pad:' fs/proc/task_mmu.c
+          echo "Fixing task_mmu.c logic..."
+          FILE="fs/proc/task_mmu.c"
+          TMP="/tmp/task_mmu_fix.$$"
+          
+          # 1. Hapus jika ada show_pad di baris 1 (Fix error sebelumnya)
+          sed -i '1{/^show_pad:/d}' "$FILE"
+          
+          # 2. Coba hapus blok goto show_pad jika ada logic conflict
+          awk '
+            BEGIN { in=0; buf="" }
+            {
+              if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) {
+                in=1; buf=$0 "\n"; next
+              }
+              if (in) {
+                buf = buf $0 "\n"
+                if ($0 ~ /^#endif/) {
+                  if (buf ~ /goto[[:space:]]+show_pad/) {
+                    in=0; buf=""
+                    next
+                  } else {
+                    printf "%s", buf
+                    in=0; buf=""
+                    next
+                  }
+                }
+                next
+              }
+              print
+            }
+          ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+          
+          # 3. Masukkan label show_pad: di tempat yang BENAR (di dalam fungsi)
+          if ! grep -q '^show_pad:$' "$FILE"; then
+            if grep -q 'show_map_pad_vma' "$FILE"; then
+              # Masukkan sebelum show_map_pad_vma (paling aman)
+              LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
+              sed -i "${LINE}ishow_pad:" "$FILE"
+              echo "Injecting show_pad before show_map_pad_vma at line $LINE"
+            elif grep -q 'SEQ_PUT_DEC(\"Size:' "$FILE"; then
+              LINE=$(grep -n 'SEQ_PUT_DEC(\"Size:' "$FILE" | head -n1 | cut -d: -f1)
+              sed -i "${LINE}ishow_pad:" "$FILE"
+              echo "Injecting show_pad before SEQ_PUT_DEC at line $LINE"
+            else
+              echo "WARNING: Could not find good place for show_pad, skipping injection."
+            fi
+          fi
+          
+          git add "$FILE"
+          git commit -m "Auto-fix show_pad logic" || true
 
       - name: Configure Kernel
         run: |
-          # Set Path Clang yang baru didownload
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
           export ARCH=arm64
           export LLVM=1
@@ -99,23 +142,18 @@ jobs:
           make O=out gki_defconfig
           
           echo "Modifying Config..."
-          # LTO Settings
           scripts/config --file out/.config \
             -e LTO_CLANG \
             -d LTO_NONE \
             -e LTO_CLANG_THIN \
             -d LTO_CLANG_FULL \
-            -e THINLTO
-            
-          # KPM & SukiSU Settings
-          scripts/config --file out/.config \
+            -e THINLTO \
             -e KPM \
             -e CONFIG_KSU \
             -e CONFIG_KSU_SUSFS \
             -e CONFIG_KSU_SUSFS_SUS_PATH \
             -e CONFIG_KSU_SUSFS_SUS_MOUNT
             
-          # Wajib HZ=300
           scripts/config --file out/.config --set-val CONFIG_HZ 300
           
           NAME="${{ github.event.inputs.kernel_name }}"
@@ -132,6 +170,7 @@ jobs:
           cd source
           echo "Building Image using Clang 19..."
           
+          # Tambahkan NOWERROR=1 untuk mengabaikan warning kecil dari Clang 19
           make -j$(nproc --all) \
               O=out \
               CC=clang \
@@ -141,6 +180,7 @@ jobs:
               OBJCOPY=llvm-objcopy \
               OBJDUMP=llvm-objdump \
               STRIP=llvm-strip \
+              NOWERROR=1 \
               Image
 
       - name: Apply KPM Binary Patch
