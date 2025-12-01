@@ -1,11 +1,10 @@
-name: Build GKI 5.15 (Android 13 Source)
+name: Build GKI 5.15 (Clang 19)
 
 on:
   workflow_dispatch:
     inputs:
       target_version:
         description: 'Target Version (Commit Hash / Tag)'
-        # Default tag dari branch android13-5.15
         default: 'android13-5.15'
         required: true
       kernel_name:
@@ -37,27 +36,29 @@ jobs:
       - name: Clone Kernel Source (Android13-5.15)
         run: |
           echo "Cloning GKI Source (Branch: android13-5.15)..."
-          # FIXED: Sesuai request, pakai android13-5.15
           git clone https://android.googlesource.com/kernel/common -b android13-5.15 --depth 1 source
           cd source
           git fetch --unshallow || true
 
-      - name: Setup Clang (Android 13 Standard)
+      - name: Setup Clang 19 (User Requested)
         run: |
+          echo "Setting up Clang-19 (r536225)..."
           mkdir -p toolchain/clang
-          cd toolchain/clang
-          echo "Downloading Clang r450784d (Standard for Android 13)..."
-          # Clang bawaan Android 13
-          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz" | tar -xz
           
+          # URL Clang dari script kamu
+          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          
+          # Download & Extract
+          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
+          
+          echo "Clang setup done."
+
       - name: Checkout Target Version
         run: |
           cd source
           TARGET="${{ github.event.inputs.target_version }}"
           echo "Checking out: $TARGET"
-          
-          # Fallback ke HEAD kalau target hash ga ketemu
-          git checkout $TARGET || echo "Target hash not found, using latest commit from branch."
+          git checkout $TARGET || echo "Target hash not found, using latest commit."
 
       - name: Apply SukiSU & SUSFS Patches (Android 13)
         run: |
@@ -67,14 +68,11 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
           
           echo "Cloning SUSFS Patches (Branch: gki-android13-5.15)..."
-          # FIXED: SUSFS pakai branch android13-5.15
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android13-5.15 sus_temp
           
           # Copy file patch SUSFS
           cp -r sus_temp/kernel_patches/fs/* fs/
           cp -r sus_temp/kernel_patches/include/* include/
-          
-          # Patch file juga yang versi android13
           cp sus_temp/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch .
           
           echo "Applying SUSFS Patch..."
@@ -85,17 +83,14 @@ jobs:
       - name: Fix task_mmu.c (SukiSU Fix)
         run: |
           cd source
-          # Fix sederhana untuk mencegah error show_pad
           sed -i '/show_pad:/d' fs/proc/task_mmu.c
           sed -i '1ishow_pad:' fs/proc/task_mmu.c
 
       - name: Configure Kernel
         run: |
+          # Set Path Clang yang baru didownload
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
           export ARCH=arm64
-          export CLANG_TRIPLE=aarch64-linux-gnu-
-          export CROSS_COMPILE=aarch64-linux-gnu-
-          export CROSS_COMPILE_COMPAT=arm-linux-gnueabi-
           export LLVM=1
           
           cd source
@@ -103,8 +98,8 @@ jobs:
           echo "Generating GKI Defconfig..."
           make O=out gki_defconfig
           
-          echo "Modifying Config (LTO, KPM, HZ)..."
-          # Enable ThinLTO
+          echo "Modifying Config..."
+          # LTO Settings
           scripts/config --file out/.config \
             -e LTO_CLANG \
             -d LTO_NONE \
@@ -112,7 +107,7 @@ jobs:
             -d LTO_CLANG_FULL \
             -e THINLTO
             
-          # Enable KPM & KSU
+          # KPM & SukiSU Settings
           scripts/config --file out/.config \
             -e KPM \
             -e CONFIG_KSU \
@@ -120,10 +115,9 @@ jobs:
             -e CONFIG_KSU_SUSFS_SUS_PATH \
             -e CONFIG_KSU_SUSFS_SUS_MOUNT
             
-          # Set HZ 300
+          # Wajib HZ=300
           scripts/config --file out/.config --set-val CONFIG_HZ 300
           
-          # Custom Name
           NAME="${{ github.event.inputs.kernel_name }}"
           if [ ! -z "$NAME" ]; then
              sed -i "s/^EXTRAVERSION =.*/EXTRAVERSION = -$NAME/" Makefile
@@ -136,7 +130,7 @@ jobs:
           export LLVM=1
           
           cd source
-          echo "Building Image..."
+          echo "Building Image using Clang 19..."
           
           make -j$(nproc --all) \
               O=out \
