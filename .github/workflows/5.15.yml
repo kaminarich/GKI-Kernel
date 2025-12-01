@@ -1,11 +1,12 @@
-name: Build GKI 5.15 (Image Only)
+name: Build GKI 5.15 (Android 13 Source)
 
 on:
   workflow_dispatch:
     inputs:
       target_version:
-        description: 'Target Version (Commit Hash / Tag / Branch)'
-        default: 'android12-5.15'
+        description: 'Target Version (Commit Hash / Tag)'
+        # Default tag dari branch android13-5.15
+        default: 'android13-5.15'
         required: true
       kernel_name:
         description: 'Kernel Name (Optional)'
@@ -33,22 +34,21 @@ jobs:
           sudo apt install -y git curl build-essential bc bison flex libssl-dev \
             libelf-dev libncurses-dev lld python3
 
-      - name: Clone Kernel Source (5.15)
+      - name: Clone Kernel Source (Android13-5.15)
         run: |
-          echo "Cloning GKI 5.15..."
-          # Clone depth 1 agar cepat
-          git clone https://android.googlesource.com/kernel/common -b android12-5.15 --depth 1 source
+          echo "Cloning GKI Source (Branch: android13-5.15)..."
+          # FIXED: Sesuai request, pakai android13-5.15
+          git clone https://android.googlesource.com/kernel/common -b android13-5.15 --depth 1 source
           cd source
-          # Fetch sedikit history agar bisa checkout commit tertentu jika perlu
           git fetch --unshallow || true
 
-      - name: Setup Clang (Android 12/5.15 Standard)
+      - name: Setup Clang (Android 13 Standard)
         run: |
           mkdir -p toolchain/clang
           cd toolchain/clang
-          echo "Downloading Clang r416183b (Standard for GKI 5.15)..."
-          # Menggunakan Clang official Google untuk Android 12
-          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/tags/android-12.1.0_r27/clang-r416183b1.tar.gz" | tar -xz
+          echo "Downloading Clang r450784d (Standard for Android 13)..."
+          # Clang bawaan Android 13
+          curl -L "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master/clang-r450784d.tar.gz" | tar -xz
           
       - name: Checkout Target Version
         run: |
@@ -56,26 +56,29 @@ jobs:
           TARGET="${{ github.event.inputs.target_version }}"
           echo "Checking out: $TARGET"
           
-          # Jika gagal checkout (misal input branch/tag salah), lanjut ke latest
-          git checkout $TARGET || echo "Target not found, staying on latest commit."
+          # Fallback ke HEAD kalau target hash ga ketemu
+          git checkout $TARGET || echo "Target hash not found, using latest commit from branch."
 
-      - name: Apply SukiSU & SUSFS Patches
+      - name: Apply SukiSU & SUSFS Patches (Android 13)
         run: |
           cd source
           echo "Downloading SukiSU Setup..."
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
           
-          echo "Cloning SUSFS 5.15 patches..."
-          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.15 sus_temp
+          echo "Cloning SUSFS Patches (Branch: gki-android13-5.15)..."
+          # FIXED: SUSFS pakai branch android13-5.15
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android13-5.15 sus_temp
           
           # Copy file patch SUSFS
           cp -r sus_temp/kernel_patches/fs/* fs/
           cp -r sus_temp/kernel_patches/include/* include/
-          cp sus_temp/kernel_patches/50_add_susfs_in_gki-android12-5.15.patch .
+          
+          # Patch file juga yang versi android13
+          cp sus_temp/kernel_patches/50_add_susfs_in_gki-android13-5.15.patch .
           
           echo "Applying SUSFS Patch..."
-          patch -p1 < 50_add_susfs_in_gki-android12-5.15.patch
+          patch -p1 < 50_add_susfs_in_gki-android13-5.15.patch
           
           rm -rf sus_temp
 
@@ -88,7 +91,6 @@ jobs:
 
       - name: Configure Kernel
         run: |
-          # Set Environment Variables
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
           export ARCH=arm64
           export CLANG_TRIPLE=aarch64-linux-gnu-
@@ -102,7 +104,7 @@ jobs:
           make O=out gki_defconfig
           
           echo "Modifying Config (LTO, KPM, HZ)..."
-          # Mengaktifkan ThinLTO (Performance)
+          # Enable ThinLTO
           scripts/config --file out/.config \
             -e LTO_CLANG \
             -d LTO_NONE \
@@ -110,7 +112,7 @@ jobs:
             -d LTO_CLANG_FULL \
             -e THINLTO
             
-          # Mengaktifkan KPM & KSU Settings
+          # Enable KPM & KSU
           scripts/config --file out/.config \
             -e KPM \
             -e CONFIG_KSU \
@@ -118,10 +120,10 @@ jobs:
             -e CONFIG_KSU_SUSFS_SUS_PATH \
             -e CONFIG_KSU_SUSFS_SUS_MOUNT
             
-          # Set HZ ke 300 (Wajib untuk GKI)
+          # Set HZ 300
           scripts/config --file out/.config --set-val CONFIG_HZ 300
           
-          # Set Custom Name
+          # Custom Name
           NAME="${{ github.event.inputs.kernel_name }}"
           if [ ! -z "$NAME" ]; then
              sed -i "s/^EXTRAVERSION =.*/EXTRAVERSION = -$NAME/" Makefile
@@ -161,7 +163,6 @@ jobs:
           chmod +x patch
           ./patch
           
-          # Rename oImage (patched) to Image
           if [ -f oImage ]; then
              mv -f oImage Image
              echo "KPM Patch Applied Successfully."
@@ -169,12 +170,6 @@ jobs:
              echo "::error::KPM Patch Failed (oImage not created)."
              exit 1
           fi
-
-      - name: Upload Image to Artifacts
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image-GKI-5.15
-          path: source/out/arch/arm64/boot/Image
 
       - name: Upload Image to PixelDrain
         run: |
