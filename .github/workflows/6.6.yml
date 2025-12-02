@@ -47,7 +47,7 @@ jobs:
         run: |
           echo "Setting up Clang-19 (r536225)..."
           mkdir -p toolchain/clang
-          # Clang r536225 biasanya stabil untuk kernel 6.x tahun 2025
+          # Menggunakan Clang r536225 (Cocok untuk Kernel 6.6 / Android 15)
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
 
@@ -65,21 +65,40 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
           
-          echo "Attempting to clone SUSFS Patches for 6.6..."
-          # NOTE: Mencoba clone branch gki-android15-6.6. 
-          # Jika gagal, akan mencoba branch default atau berhenti.
-          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch specific 6.6 not found, trying generic..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
+          echo "Cloning SUSFS Patches (Branch: gki-android15-6.6)..."
+          # Mencoba clone branch spesifik 6.6, fallback ke main jika gagal
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch 6.6 not found, trying generic..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
           
           cp -r sus_temp/kernel_patches/fs/* fs/
           cp -r sus_temp/kernel_patches/include/* include/
           
-          # Cek nama patch yang valid di folder hasil clone
-          if [ -f "sus_temp/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" ]; then
-              cp sus_temp/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch .
-              echo "Applying SUSFS Patch (6.6)..."
-              patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch
+          PATCH_FILE="50_add_susfs_in_gki-android15-6.6.patch"
+          
+          if [ -f "sus_temp/kernel_patches/$PATCH_FILE" ]; then
+              cp "sus_temp/kernel_patches/$PATCH_FILE" .
+              echo "Applying SUSFS Patch..."
+              
+              # Gunakan '|| true' agar script tidak mati jika ada hunk rejected
+              patch -p1 < "$PATCH_FILE" || true
+              
+              # --- MANUAL FIX FOR fs/proc/base.c (Hunk #1 Error) ---
+              if [ -f "fs/proc/base.c.rej" ]; then
+                  echo "::warning:: Detected patch rejection in fs/proc/base.c. Attempting manual fix..."
+                  
+                  # Cek apakah header susfs sudah ada, jika belum inject manual
+                  if ! grep -q "linux/susfs.h" fs/proc/base.c; then
+                      # Menyisipkan #include <linux/susfs.h> setelah #include <linux/sched.h>
+                      sed -i '/#include <linux\/sched.h>/a #include <linux/susfs.h>' fs/proc/base.c
+                      echo "Manually added #include <linux/susfs.h> to fs/proc/base.c"
+                  fi
+                  
+                  rm -f fs/proc/base.c.rej
+              fi
+              # -----------------------------------------------------
+              
           else
-              echo "::warning:: Patch 50_add_susfs_in_gki-android15-6.6.patch not found! Check repository structure."
+              echo "::error:: Patch file $PATCH_FILE not found! Check repository content."
+              exit 1
           fi
           
           rm -rf sus_temp
@@ -90,15 +109,17 @@ jobs:
           FILE="fs/proc/task_mmu.c"
           
           if [ ! -f "$FILE" ]; then
-             echo "::warning:: $FILE not found in Kernel 6.6 structure. Skipping fix."
+             echo "::warning:: $FILE not found. Skipping fix."
              exit 0
           fi
           
           echo "Fixing task_mmu.c logic..."
           TMP="/tmp/task_mmu_fix.$$"
           
+          # Hapus label show_pad lama jika ada di baris pertama (sisa patch error)
           sed -i '1{/^show_pad:/d}' "$FILE"
           
+          # AWK script untuk merapikan ifdef/endif yang mungkin berantakan
           awk '
             BEGIN { inside=0; buf="" }
             {
@@ -123,7 +144,7 @@ jobs:
             }
           ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
           
-          # Logic penambahan label show_pad jika hilang
+          # Pastikan label show_pad ada jika dibutuhkan
           if ! grep -q '^show_pad:$' "$FILE"; then
             if grep -q 'show_map_pad_vma' "$FILE"; then
               LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
