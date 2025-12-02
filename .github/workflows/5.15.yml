@@ -43,7 +43,7 @@ jobs:
           cd source
           git fetch --unshallow || true
 
-      - name: Setup Clang 19 (User Requested)
+      - name: Setup Clang 19
         run: |
           echo "Setting up Clang-19 (r536225)..."
           mkdir -p toolchain/clang
