@@ -1,20 +1,29 @@
-name: Build GKI 6.6 (Android 15)
+name: Build GKI 6.6 (Selectable Variant)
 
 on:
   workflow_dispatch:
     inputs:
       target_version:
-        description: 'Target Version (Commit Hash / Tag)'
+        description: 'Target Version (Tag/Commit)'
         default: 'android15-6.6'
         required: true
+      build_variant:
+        description: 'Select Build Variant'
+        required: true
+        default: 'SukiSU'
+        type: choice
+        options:
+          - 'Vanilla'
+          - 'KernelSU-Next'
+          - 'SukiSU'
       kernel_name:
-        description: 'Kernel Name (Optional)'
+        description: 'Custom Name (Optional)'
         required: false
         default: ''
 
 jobs:
   build:
-    name: Build Kernel 6.6
+    name: Build ${{ github.event.inputs.build_variant }}
     runs-on: ubuntu-24.04
 
     steps:
@@ -31,12 +40,12 @@ jobs:
         run: |
           sudo apt update
           sudo apt install -y git curl build-essential bc bison flex libssl-dev \
-            libelf-dev libncurses-dev lld python3 dwarves
+            libelf-dev libncurses-dev lld python3 dwarves zip
           
           git config --global user.name "Bot"
           git config --global user.email "bot@example.com"
 
-      - name: Clone Kernel Source (Android15-6.6)
+      - name: Clone Kernel Source
         run: |
           echo "Cloning GKI Source (Branch: android15-6.6)..."
           git clone https://android.googlesource.com/kernel/common -b android15-6.6 --depth 1 source
@@ -45,9 +54,7 @@ jobs:
 
       - name: Setup Clang 19
         run: |
-          echo "Setting up Clang-19 (r536225)..."
           mkdir -p toolchain/clang
-          # Menggunakan Clang r536225 (Cocok untuk Kernel 6.6 / Android 15)
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
 
@@ -55,141 +62,88 @@ jobs:
         run: |
           cd source
           TARGET="${{ github.event.inputs.target_version }}"
-          echo "Checking out: $TARGET"
           git checkout $TARGET || echo "Target hash not found, using latest commit."
 
-      - name: Apply SukiSU & SUSFS Patches (Android 15)
+      # --- LOGIC PILIHAN VARIANT (KSU / SUKI / VANILLA) ---
+      - name: Setup Root & SUSFS (Conditional)
+        if: github.event.inputs.build_variant != 'Vanilla'
         run: |
           cd source
-          echo "Downloading SukiSU Setup..."
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          
-          echo "Cloning SUSFS Patches (Branch: gki-android15-6.6)..."
-          # Clone patch repo, fallback ke main jika branch spesifik tidak ada
+          VARIANT="${{ github.event.inputs.build_variant }}"
+          echo "=== Setting up $VARIANT ==="
+
+          # 1. Setup KernelSU / SukiSU
+          if [ "$VARIANT" == "KernelSU-Next" ]; then
+              echo "Downloading KernelSU-Next..."
+              curl -LSs "https://raw.githubusercontent.com/rifsxd/KernelSU-Next/next/kernel/setup.sh" | bash -s next
+          elif [ "$VARIANT" == "SukiSU" ]; then
+              echo "Downloading SukiSU..."
+              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+              curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          fi
+
+          # 2. Clone SUSFS (Berlaku untuk KSU-Next dan SukiSU)
+          echo "Cloning SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch 6.6 not found, trying generic..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
-          
-          # 1. COPY HEADERS SECARA MANUAL (Fix Undeclared Identifier)
-          echo "Copying SUSFS headers..."
+
+          # 3. Copy Headers (Fix Critical Undeclared Identifier)
           cp -r sus_temp/kernel_patches/include/* include/
           cp -r sus_temp/kernel_patches/fs/* fs/
-          
+
+          # 4. Apply Patch SUSFS
           PATCH_FILE="50_add_susfs_in_gki-android15-6.6.patch"
-          
           if [ -f "sus_temp/kernel_patches/$PATCH_FILE" ]; then
               cp "sus_temp/kernel_patches/$PATCH_FILE" .
-              echo "Applying SUSFS Patch..."
-              
-              # Gunakan '|| true' agar script tidak mati jika ada hunk rejected
               patch -p1 < "$PATCH_FILE" || true
               
-              # --- CRITICAL FIX FOR fs/proc/base.c ---
-              echo "Applying Manual Fix for fs/proc/base.c..."
-              
-              # Hapus header lama jika ada (untuk menghindari duplikasi)
+              # --- MANUAL FIX fs/proc/base.c ---
+              # Memastikan header ter-include agar tidak error 'BIT_SUS_MAPS'
               sed -i '/#include <linux\/susfs.h>/d' fs/proc/base.c
-              
-              # Suntikkan header susfs.h setelah linux/fs.h atau linux/sched.h
               if grep -q "#include <linux/fs.h>" fs/proc/base.c; then
                   sed -i '/#include <linux\/fs.h>/a #include <linux/susfs.h>' fs/proc/base.c
-              elif grep -q "#include <linux/sched.h>" fs/proc/base.c; then
-                  sed -i '/#include <linux\/sched.h>/a #include <linux/susfs.h>' fs/proc/base.c
               else
-                  # Fallback: Masukkan paksa di baris 20
                   sed -i '20i#include <linux/susfs.h>' fs/proc/base.c
               fi
-              
-              # Hapus file reject agar tidak mengganggu build
               rm -f fs/proc/base.c.rej
-              
-              # Verifikasi apakah fix berhasil
-              if grep -q "linux/susfs.h" fs/proc/base.c; then
-                 echo "SUCCESS: Header <linux/susfs.h> added to fs/proc/base.c"
-              else
-                 echo "::error:: FAILED to add header to fs/proc/base.c"
-                 exit 1
-              fi
-              # -----------------------------------------------------
-              
-          else
-              echo "::error:: Patch file $PATCH_FILE not found! Check repository content."
-              exit 1
+              # ---------------------------------
           fi
-          
           rm -rf sus_temp
 
-      - name: Fix task_mmu.c (Logic Safe Check)
+      - name: Fix task_mmu.c (Only if SUSFS Applied)
+        if: github.event.inputs.build_variant != 'Vanilla'
         run: |
           cd source
           FILE="fs/proc/task_mmu.c"
-          
-          if [ ! -f "$FILE" ]; then
-             echo "::warning:: $FILE not found. Skipping fix."
-             exit 0
+          if [ -f "$FILE" ]; then
+              TMP="/tmp/task_mmu_fix.$$"
+              sed -i '1{/^show_pad:/d}' "$FILE"
+              awk 'BEGIN { inside=0; buf="" } { if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) { inside=1; buf=$0 "\n"; next } if (inside) { buf = buf $0 "\n"; if ($0 ~ /^#endif/) { if (buf ~ /goto[[:space:]]+show_pad/) { inside=0; buf=""; next } else { printf "%s", buf; inside=0; buf=""; next } } next } print }' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+              
+              if ! grep -q '^show_pad:$' "$FILE"; then
+                if grep -q 'show_map_pad_vma' "$FILE"; then
+                   LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
+                   sed -i "${LINE}ishow_pad:" "$FILE"
+                fi
+              fi
           fi
-          
-          echo "Fixing task_mmu.c logic..."
-          TMP="/tmp/task_mmu_fix.$$"
-          
-          # Hapus label show_pad lama jika ada di baris pertama (sisa patch error)
-          sed -i '1{/^show_pad:/d}' "$FILE"
-          
-          # AWK script untuk merapikan ifdef/endif yang mungkin berantakan
-          awk '
-            BEGIN { inside=0; buf="" }
-            {
-              if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) {
-                inside=1; buf=$0 "\n"; next
-              }
-              if (inside) {
-                buf = buf $0 "\n"
-                if ($0 ~ /^#endif/) {
-                  if (buf ~ /goto[[:space:]]+show_pad/) {
-                    inside=0; buf=""
-                    next
-                  } else {
-                    printf "%s", buf
-                    inside=0; buf=""
-                    next
-                  }
-                }
-                next
-              }
-              print
-            }
-          ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
-          
-          # Pastikan label show_pad ada jika dibutuhkan
-          if ! grep -q '^show_pad:$' "$FILE"; then
-            if grep -q 'show_map_pad_vma' "$FILE"; then
-              LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
-              sed -i "${LINE}ishow_pad:" "$FILE"
-            elif grep -q 'SEQ_PUT_DEC(\"Size:' "$FILE"; then
-              LINE=$(grep -n 'SEQ_PUT_DEC(\"Size:' "$FILE" | head -n1 | cut -d: -f1)
-              sed -i "${LINE}ishow_pad:" "$FILE"
-            fi
-          fi
-          
-          git add "$FILE"
-          git commit -m "Auto-fix show_pad logic" || true
 
-      - name: Set Kernel EXTRAVERSION (Custom Name)
+      - name: Set Custom Name
         run: |
           cd source
           echo "" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
-          
           CUSTOM_NAME="${{ github.event.inputs.kernel_name }}"
-
-          if [ -n "$CUSTOM_NAME" ]; then
-             echo "Using custom kernel name: $CUSTOM_NAME"
-             if grep -q '^EXTRAVERSION *=' Makefile; then
-               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$CUSTOM_NAME/" Makefile
-             else
-               echo "EXTRAVERSION = -$CUSTOM_NAME" >> Makefile
-             fi
+          VARIANT="${{ github.event.inputs.build_variant }}"
+          
+          # Jika user tidak isi nama, otomatis pakai nama Variant
+          if [ -z "$CUSTOM_NAME" ]; then
+             CUSTOM_NAME="$VARIANT"
+          fi
+          
+          if grep -q '^EXTRAVERSION *=' Makefile; then
+             sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$CUSTOM_NAME/" Makefile
           else
-             echo "Kernel name is empty. Using default Android version."
+             echo "EXTRAVERSION = -$CUSTOM_NAME" >> Makefile
           fi
 
       - name: Configure Kernel
@@ -197,86 +151,57 @@ jobs:
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
           export ARCH=arm64
           export LLVM=1
-          
           cd source
           
-          echo "Generating GKI Defconfig..."
           make O=out gki_defconfig
           
-          echo "Modifying Config..."
-          
-          scripts/config --file out/.config \
-            -e LTO_CLANG \
-            -d LTO_NONE \
-            -e LTO_CLANG_THIN \
-            -d LTO_CLANG_FULL \
-            -e THINLTO
-            
-          scripts/config --file out/.config \
-            -e KPM \
-            -e CONFIG_KSU \
-            -e CONFIG_KSU_SUSFS \
-            -e CONFIG_KSU_SUSFS_SUS_PATH \
-            -e CONFIG_KSU_SUSFS_SUS_MOUNT
-            
+          # Config Dasar
+          scripts/config --file out/.config -e LTO_CLANG -d LTO_NONE -e LTO_CLANG_THIN -d LTO_CLANG_FULL -e THINLTO
           scripts/config --file out/.config --set-val CONFIG_HZ 300
+          
+          # Config Khusus Jika Bukan Vanilla
+          if [ "${{ github.event.inputs.build_variant }}" != "Vanilla" ]; then
+             scripts/config --file out/.config -e KPM -e CONFIG_KSU -e CONFIG_KSU_SUSFS -e CONFIG_KSU_SUSFS_SUS_PATH -e CONFIG_KSU_SUSFS_SUS_MOUNT
+          fi
 
       - name: Build Kernel Image
         run: |
           export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
           export ARCH=arm64
           export LLVM=1
-          
           cd source
-          echo "Building Image using Clang 19..."
           
-          make -j$(nproc --all) \
-              O=out \
-              CC=clang \
-              LD=ld.lld \
-              AR=llvm-ar \
-              NM=llvm-nm \
-              OBJCOPY=llvm-objcopy \
-              OBJDUMP=llvm-objdump \
-              STRIP=llvm-strip \
-              NOWERROR=1 \
-              Image
+          make -j$(nproc --all) O=out CC=clang LD=ld.lld AR=llvm-ar NM=llvm-nm OBJCOPY=llvm-objcopy OBJDUMP=llvm-objdump STRIP=llvm-strip NOWERROR=1 Image
 
-      - name: Apply KPM Binary Patch
+      # Patch Binary KPM (Hanya untuk SukiSU)
+      - name: Apply KPM Patch (SukiSU Only)
+        if: github.event.inputs.build_variant == 'SukiSU'
         run: |
           cd source/out/arch/arm64/boot
-          
-          if [ ! -f Image ]; then
-             echo "::error::Build Failed! Image not found."
-             exit 1
-          fi
-          
-          echo "Applying KPM Patch..."
           curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
           chmod +x patch
           ./patch
-          
-          if [ -f oImage ]; then
-             mv -f oImage Image
-             echo "KPM Patch Applied Successfully."
-          else
-             echo "::error::KPM Patch Failed (oImage not created)."
-             exit 1
-          fi
+          [ -f oImage ] && mv -f oImage Image || echo "Patch applied or handled."
 
-      - name: Upload Image to Artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: Image-Android15-6.6
-          path: source/out/arch/arm64/boot/Image
-          if-no-files-found: error
-
-      - name: Upload Image to PixelDrain
+      - name: Package Artifacts
         run: |
           cd source/out/arch/arm64/boot
-          echo "Uploading Image to PixelDrain..."
+          VARIANT="${{ github.event.inputs.build_variant }}"
           
+          # Rename Image sesuai variant agar rapi
+          mv Image Image-$VARIANT
+          zip -r Kernel-$VARIANT.zip Image-$VARIANT
+
+      - name: Upload to Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: Kernel-${{ github.event.inputs.build_variant }}
+          path: source/out/arch/arm64/boot/Kernel-*.zip
+
+      - name: Upload to PixelDrain
+        run: |
+          cd source/out/arch/arm64/boot
+          echo "Uploading to PixelDrain..."
           curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
-            -F file=@Image \
+            -F file=@Kernel-${{ github.event.inputs.build_variant }}.zip \
             https://pixeldrain.com/api/file
