@@ -1,4 +1,4 @@
-Name: Build GKI 6.6 (Android 15)
+name: Build GKI 6.6 (Android 15)
 
 on:
   workflow_dispatch:
@@ -47,7 +47,7 @@ jobs:
         run: |
           echo "Setting up Clang-19 (r536225)..."
           mkdir -p toolchain/clang
-          # Clang versi 2025 cocok untuk Kernel 6.6
+          # Clang r536225 biasanya stabil untuk kernel 6.x tahun 2025
           CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
 
@@ -65,39 +65,38 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
           
-          # UPDATE: Mengubah branch target ke gki-android15-6.6
-          echo "Cloning SUSFS Patches (Branch: gki-android15-6.6)..."
-          # Catatan: Jika branch android15-6.6 belum tersedia di repo simonpunk, step ini akan gagal.
-          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch 6.6 not found, trying fallback..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
+          echo "Attempting to clone SUSFS Patches for 6.6..."
+          # NOTE: Mencoba clone branch gki-android15-6.6. 
+          # Jika gagal, akan mencoba branch default atau berhenti.
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch specific 6.6 not found, trying generic..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
           
           cp -r sus_temp/kernel_patches/fs/* fs/
           cp -r sus_temp/kernel_patches/include/* include/
           
-          # Mencoba mencari patch yang sesuai dengan nama versi
+          # Cek nama patch yang valid di folder hasil clone
           if [ -f "sus_temp/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" ]; then
               cp sus_temp/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch .
               echo "Applying SUSFS Patch (6.6)..."
               patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch
           else
-              echo "::warning:: Patch specific to Android15-6.6 not found. Checking generic patches..."
-              # Fallback logic if needed, or exit
+              echo "::warning:: Patch 50_add_susfs_in_gki-android15-6.6.patch not found! Check repository structure."
           fi
           
           rm -rf sus_temp
 
-      - name: Fix task_mmu.c (Advanced Fix)
+      - name: Fix task_mmu.c (Logic Safe Check)
         run: |
           cd source
-          echo "Fixing task_mmu.c logic..."
           FILE="fs/proc/task_mmu.c"
-          TMP="/tmp/task_mmu_fix.$$"
           
-          # Cek keberadaan file (struktur folder kernel 6.6 mungkin berubah)
           if [ ! -f "$FILE" ]; then
-             echo "::warning:: $FILE not found, skipping fix."
+             echo "::warning:: $FILE not found in Kernel 6.6 structure. Skipping fix."
              exit 0
           fi
-
+          
+          echo "Fixing task_mmu.c logic..."
+          TMP="/tmp/task_mmu_fix.$$"
+          
           sed -i '1{/^show_pad:/d}' "$FILE"
           
           awk '
@@ -124,6 +123,7 @@ jobs:
             }
           ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
           
+          # Logic penambahan label show_pad jika hilang
           if ! grep -q '^show_pad:$' "$FILE"; then
             if grep -q 'show_map_pad_vma' "$FILE"; then
               LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
@@ -169,7 +169,6 @@ jobs:
           
           echo "Modifying Config..."
           
-          # LTO Settings
           scripts/config --file out/.config \
             -e LTO_CLANG \
             -d LTO_NONE \
@@ -177,7 +176,6 @@ jobs:
             -d LTO_CLANG_FULL \
             -e THINLTO
             
-          # KPM & SukiSU Settings
           scripts/config --file out/.config \
             -e KPM \
             -e CONFIG_KSU \
