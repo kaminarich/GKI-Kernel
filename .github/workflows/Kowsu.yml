@@ -1,10 +1,10 @@
-name: GKI KowSu (KSU/SuSFS)
+name: Kowsu
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel Custom (Kosongkan untuk default)'
+        description: 'Nama Kernel (Opsional, Max 15 char agar tidak error)'
         required: false
         default: ''
       clang_version:
@@ -66,14 +66,13 @@ jobs:
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
           fi
           
-          # Export ver untuk step selanjutnya
           echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
 
           mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
           cd prebuilts-master/clang/host/linux-x86
           curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
           
-          # Fix Symlink as requested
+          # Fix Symlink untuk kompatibilitas script build
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
@@ -131,10 +130,20 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
-          CONFIG_HZ_500=y
+          CONFIG_HZ_300=y
           CONFIG_CPU_FREQ=y
           CONFIG_HIGH_RES_TIMERS=y
           CONFIG_CLEANCACHE=y
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          CONFIG_IP6_NF_MATCH_HL=y
+          CONFIG_TCP_CONG_ADVANCED=y
+          CONFIG_TCP_CONG_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_TCP_CONG_BIC=n
+          CONFIG_TCP_CONG_WESTWOOD=n
+          CONFIG_TCP_CONG_HTCP=n
+          CONFIG_DEFAULT_BBR=y
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           EOF
@@ -146,42 +155,48 @@ jobs:
           
           # Patch 1: Common 5.10 update/fix
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
-             echo "Failed to apply Patch 1 via git am, trying patch command..."
+             echo "git am failed, falling back to patch..."
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
           }
 
           # Patch 2: Xiaomi Marble specific fix
           curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3 || {
-             echo "Failed to apply Patch 2 via git am, trying patch command..."
+             echo "git am failed, falling back to patch..."
              curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1
           }
 
-      - name: Final Build Config
+      - name: Final Build Config & Version Fix
         working-directory: gki
         run: |
-          # Update build config to use selected Clang version
+          # 1. FIX: Hapus semua file localversion dari upstream agar tidak bentrok
+          rm -f common/localversion*
+          
+          # 2. Update build config untuk Clang version
           sed -i "s/clang-r[0-9]*[a-z]*/${CLANG_VER}/g" common/build.config.gki.aarch64
           sed -i "s/clang-r[0-9]*[a-z]*/${CLANG_VER}/g" common/build.config.common 2>/dev/null || true
           
-          # Disable check_defconfig
+          # 3. Disable check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
           
-          # Handle Kernel Name / Branding
-          chmod +x ./common/scripts/setlocalversion
-          
+          # 4. Handle Kernel Name / Branding
           DEFCONFIG2="./common/arch/arm64/configs/gki_defconfig"
           
-          # Reset LOCALVERSION first
+          # Hapus settingan lama
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG2"
           
           if [ ! -z "${{ github.event.inputs.kernel_name }}" ]; then
             echo "Using custom kernel name: ${{ github.event.inputs.kernel_name }}"
             BRAND="-${{ github.event.inputs.kernel_name }}"
-            echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG2"
           else
-            echo "No custom name provided, using default configuration."
+            BRAND=""
           fi
           
+          # FIX: Paksa script setlocalversion untuk HANYA output brand kita
+          # Ini mencegah tag git upstream (seperti Rama982-RE...) masuk ke nama kernel
+          echo "echo \"$BRAND\"" > common/scripts/setlocalversion
+          chmod +x common/scripts/setlocalversion
+          
+          echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG2"
           echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG2"
 
       - name: Build Kernel
@@ -198,5 +213,5 @@ jobs:
       - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
-          name: Image-${{ github.event.inputs.kernel_name || 'GKI' }}
+          name: Image${{ github.event.inputs.kernel_name }}
           path: gki/out/**/dist/Image
