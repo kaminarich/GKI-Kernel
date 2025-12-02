@@ -1,4 +1,4 @@
-name: Suki Latest 
+name: Suki Latest
 
 on:
   workflow_dispatch:
@@ -67,28 +67,33 @@ jobs:
           cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
           patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
 
-      # --- Compatibility & Extra Patches Section Start ---
-      - name: Apply Compatibility Patches (Includes Xiaomi Fix)
-        working-directory: gki/common
-        run: |
-          # Xiaomi Compatibility (Modifying drm_atomic_helper.c manually here)
-          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
-          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
-          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
-
       - name: Apply Extra Cherry-Picks
         working-directory: gki/common
         run: |
           echo "Applying requested cherry-picks..."
-          
           # Patch 1: Common 5.10 update/fix
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
              echo "git am failed, falling back to patch..."
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
           }
+
+      - name: Apply inline patch for module.c and drm_atomic_helper.c
+        run: |
+          cd gki
+          echo "patching module.c (change version mismatch to return 1)"
+          sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
           
-          # Patch 2 (Xiaomi Marble) REMOVED because it's already handled by 'sed' above.
-      # --- Compatibility & Extra Patches Section End ---
+          echo "removing drm_atomic_check valid_clones"
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c
+          
+          echo "Removing drm_atomic_check_valid_clones call..."
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
+
+      - name: Remove check_defconfig
+        run: |
+          echo "🧹 [8/9] delete check_defconfig"
+          cd gki
+          sed -i 's/check_defconfig//' ./common/build.config.gki
 
       - name: Fix KernelSU and sus directory state
         run: |
@@ -105,6 +110,12 @@ jobs:
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           echo "Injecting custom configs to $DEFCONFIG"
+          
+          # --- KSU & KPM Configs ---
+          # echo "CONFIG_KSU=y" >> $DEFCONFIG
+          echo "CONFIG_KPM=y" >> $DEFCONFIG
+
+          # --- Custom Network & FS ---
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
