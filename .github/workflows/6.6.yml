@@ -66,11 +66,13 @@ jobs:
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
           
           echo "Cloning SUSFS Patches (Branch: gki-android15-6.6)..."
-          # Mencoba clone branch spesifik 6.6, fallback ke main jika gagal
+          # Clone patch repo, fallback ke main jika branch spesifik tidak ada
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch 6.6 not found, trying generic..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
           
-          cp -r sus_temp/kernel_patches/fs/* fs/
+          # 1. COPY HEADERS SECARA MANUAL (Fix Undeclared Identifier)
+          echo "Copying SUSFS headers..."
           cp -r sus_temp/kernel_patches/include/* include/
+          cp -r sus_temp/kernel_patches/fs/* fs/
           
           PATCH_FILE="50_add_susfs_in_gki-android15-6.6.patch"
           
@@ -81,18 +83,31 @@ jobs:
               # Gunakan '|| true' agar script tidak mati jika ada hunk rejected
               patch -p1 < "$PATCH_FILE" || true
               
-              # --- MANUAL FIX FOR fs/proc/base.c (Hunk #1 Error) ---
-              if [ -f "fs/proc/base.c.rej" ]; then
-                  echo "::warning:: Detected patch rejection in fs/proc/base.c. Attempting manual fix..."
-                  
-                  # Cek apakah header susfs sudah ada, jika belum inject manual
-                  if ! grep -q "linux/susfs.h" fs/proc/base.c; then
-                      # Menyisipkan #include <linux/susfs.h> setelah #include <linux/sched.h>
-                      sed -i '/#include <linux\/sched.h>/a #include <linux/susfs.h>' fs/proc/base.c
-                      echo "Manually added #include <linux/susfs.h> to fs/proc/base.c"
-                  fi
-                  
-                  rm -f fs/proc/base.c.rej
+              # --- CRITICAL FIX FOR fs/proc/base.c ---
+              echo "Applying Manual Fix for fs/proc/base.c..."
+              
+              # Hapus header lama jika ada (untuk menghindari duplikasi)
+              sed -i '/#include <linux\/susfs.h>/d' fs/proc/base.c
+              
+              # Suntikkan header susfs.h setelah linux/fs.h atau linux/sched.h
+              if grep -q "#include <linux/fs.h>" fs/proc/base.c; then
+                  sed -i '/#include <linux\/fs.h>/a #include <linux/susfs.h>' fs/proc/base.c
+              elif grep -q "#include <linux/sched.h>" fs/proc/base.c; then
+                  sed -i '/#include <linux\/sched.h>/a #include <linux/susfs.h>' fs/proc/base.c
+              else
+                  # Fallback: Masukkan paksa di baris 20
+                  sed -i '20i#include <linux/susfs.h>' fs/proc/base.c
+              fi
+              
+              # Hapus file reject agar tidak mengganggu build
+              rm -f fs/proc/base.c.rej
+              
+              # Verifikasi apakah fix berhasil
+              if grep -q "linux/susfs.h" fs/proc/base.c; then
+                 echo "SUCCESS: Header <linux/susfs.h> added to fs/proc/base.c"
+              else
+                 echo "::error:: FAILED to add header to fs/proc/base.c"
+                 exit 1
               fi
               # -----------------------------------------------------
               
