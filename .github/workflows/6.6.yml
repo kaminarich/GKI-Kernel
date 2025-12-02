@@ -1,0 +1,248 @@
+Name: Build GKI 6.6 (Android 15)
+
+on:
+  workflow_dispatch:
+    inputs:
+      target_version:
+        description: 'Target Version (Commit Hash / Tag)'
+        default: 'android15-6.6'
+        required: true
+      kernel_name:
+        description: 'Kernel Name (Optional)'
+        required: false
+        default: ''
+
+jobs:
+  build:
+    name: Build Kernel 6.6
+    runs-on: ubuntu-24.04
+
+    steps:
+      - name: Maximize Build Space
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-codeql: 'true'
+
+      - name: Install Dependencies
+        run: |
+          sudo apt update
+          sudo apt install -y git curl build-essential bc bison flex libssl-dev \
+            libelf-dev libncurses-dev lld python3 dwarves
+          
+          git config --global user.name "Bot"
+          git config --global user.email "bot@example.com"
+
+      - name: Clone Kernel Source (Android15-6.6)
+        run: |
+          echo "Cloning GKI Source (Branch: android15-6.6)..."
+          git clone https://android.googlesource.com/kernel/common -b android15-6.6 --depth 1 source
+          cd source
+          git fetch --unshallow || true
+
+      - name: Setup Clang 19
+        run: |
+          echo "Setting up Clang-19 (r536225)..."
+          mkdir -p toolchain/clang
+          # Clang versi 2025 cocok untuk Kernel 6.6
+          CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          curl -L "${CLANG_URL}" | tar -xz -C toolchain/clang
+
+      - name: Checkout Target Version
+        run: |
+          cd source
+          TARGET="${{ github.event.inputs.target_version }}"
+          echo "Checking out: $TARGET"
+          git checkout $TARGET || echo "Target hash not found, using latest commit."
+
+      - name: Apply SukiSU & SUSFS Patches (Android 15)
+        run: |
+          cd source
+          echo "Downloading SukiSU Setup..."
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          
+          # UPDATE: Mengubah branch target ke gki-android15-6.6
+          echo "Cloning SUSFS Patches (Branch: gki-android15-6.6)..."
+          # Catatan: Jika branch android15-6.6 belum tersedia di repo simonpunk, step ini akan gagal.
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android15-6.6 sus_temp || (echo "Branch 6.6 not found, trying fallback..." && git clone https://gitlab.com/simonpunk/susfs4ksu/ sus_temp)
+          
+          cp -r sus_temp/kernel_patches/fs/* fs/
+          cp -r sus_temp/kernel_patches/include/* include/
+          
+          # Mencoba mencari patch yang sesuai dengan nama versi
+          if [ -f "sus_temp/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch" ]; then
+              cp sus_temp/kernel_patches/50_add_susfs_in_gki-android15-6.6.patch .
+              echo "Applying SUSFS Patch (6.6)..."
+              patch -p1 < 50_add_susfs_in_gki-android15-6.6.patch
+          else
+              echo "::warning:: Patch specific to Android15-6.6 not found. Checking generic patches..."
+              # Fallback logic if needed, or exit
+          fi
+          
+          rm -rf sus_temp
+
+      - name: Fix task_mmu.c (Advanced Fix)
+        run: |
+          cd source
+          echo "Fixing task_mmu.c logic..."
+          FILE="fs/proc/task_mmu.c"
+          TMP="/tmp/task_mmu_fix.$$"
+          
+          # Cek keberadaan file (struktur folder kernel 6.6 mungkin berubah)
+          if [ ! -f "$FILE" ]; then
+             echo "::warning:: $FILE not found, skipping fix."
+             exit 0
+          fi
+
+          sed -i '1{/^show_pad:/d}' "$FILE"
+          
+          awk '
+            BEGIN { inside=0; buf="" }
+            {
+              if ($0 ~ /^#ifdef[[:space:]]+CONFIG_KSU_SUSFS_SUS_MAP/) {
+                inside=1; buf=$0 "\n"; next
+              }
+              if (inside) {
+                buf = buf $0 "\n"
+                if ($0 ~ /^#endif/) {
+                  if (buf ~ /goto[[:space:]]+show_pad/) {
+                    inside=0; buf=""
+                    next
+                  } else {
+                    printf "%s", buf
+                    inside=0; buf=""
+                    next
+                  }
+                }
+                next
+              }
+              print
+            }
+          ' "$FILE" > "$TMP" && mv "$TMP" "$FILE"
+          
+          if ! grep -q '^show_pad:$' "$FILE"; then
+            if grep -q 'show_map_pad_vma' "$FILE"; then
+              LINE=$(grep -n 'show_map_pad_vma' "$FILE" | head -n1 | cut -d: -f1)
+              sed -i "${LINE}ishow_pad:" "$FILE"
+            elif grep -q 'SEQ_PUT_DEC(\"Size:' "$FILE"; then
+              LINE=$(grep -n 'SEQ_PUT_DEC(\"Size:' "$FILE" | head -n1 | cut -d: -f1)
+              sed -i "${LINE}ishow_pad:" "$FILE"
+            fi
+          fi
+          
+          git add "$FILE"
+          git commit -m "Auto-fix show_pad logic" || true
+
+      - name: Set Kernel EXTRAVERSION (Custom Name)
+        run: |
+          cd source
+          echo "" > scripts/setlocalversion
+          chmod +x scripts/setlocalversion
+          
+          CUSTOM_NAME="${{ github.event.inputs.kernel_name }}"
+
+          if [ -n "$CUSTOM_NAME" ]; then
+             echo "Using custom kernel name: $CUSTOM_NAME"
+             if grep -q '^EXTRAVERSION *=' Makefile; then
+               sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$CUSTOM_NAME/" Makefile
+             else
+               echo "EXTRAVERSION = -$CUSTOM_NAME" >> Makefile
+             fi
+          else
+             echo "Kernel name is empty. Using default Android version."
+          fi
+
+      - name: Configure Kernel
+        run: |
+          export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
+          export ARCH=arm64
+          export LLVM=1
+          
+          cd source
+          
+          echo "Generating GKI Defconfig..."
+          make O=out gki_defconfig
+          
+          echo "Modifying Config..."
+          
+          # LTO Settings
+          scripts/config --file out/.config \
+            -e LTO_CLANG \
+            -d LTO_NONE \
+            -e LTO_CLANG_THIN \
+            -d LTO_CLANG_FULL \
+            -e THINLTO
+            
+          # KPM & SukiSU Settings
+          scripts/config --file out/.config \
+            -e KPM \
+            -e CONFIG_KSU \
+            -e CONFIG_KSU_SUSFS \
+            -e CONFIG_KSU_SUSFS_SUS_PATH \
+            -e CONFIG_KSU_SUSFS_SUS_MOUNT
+            
+          scripts/config --file out/.config --set-val CONFIG_HZ 300
+
+      - name: Build Kernel Image
+        run: |
+          export PATH=$GITHUB_WORKSPACE/toolchain/clang/bin:$PATH
+          export ARCH=arm64
+          export LLVM=1
+          
+          cd source
+          echo "Building Image using Clang 19..."
+          
+          make -j$(nproc --all) \
+              O=out \
+              CC=clang \
+              LD=ld.lld \
+              AR=llvm-ar \
+              NM=llvm-nm \
+              OBJCOPY=llvm-objcopy \
+              OBJDUMP=llvm-objdump \
+              STRIP=llvm-strip \
+              NOWERROR=1 \
+              Image
+
+      - name: Apply KPM Binary Patch
+        run: |
+          cd source/out/arch/arm64/boot
+          
+          if [ ! -f Image ]; then
+             echo "::error::Build Failed! Image not found."
+             exit 1
+          fi
+          
+          echo "Applying KPM Patch..."
+          curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
+          chmod +x patch
+          ./patch
+          
+          if [ -f oImage ]; then
+             mv -f oImage Image
+             echo "KPM Patch Applied Successfully."
+          else
+             echo "::error::KPM Patch Failed (oImage not created)."
+             exit 1
+          fi
+
+      - name: Upload Image to Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: Image-Android15-6.6
+          path: source/out/arch/arm64/boot/Image
+          if-no-files-found: error
+
+      - name: Upload Image to PixelDrain
+        run: |
+          cd source/out/arch/arm64/boot
+          echo "Uploading Image to PixelDrain..."
+          
+          curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
+            -F file=@Image \
+            https://pixeldrain.com/api/file
