@@ -78,12 +78,20 @@ jobs:
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
           }
 
+      - name: Apply Manual Stack Protector Fix
+        working-directory: gki/common
+        run: |
+          echo "🛠️ Applying manual Stack Protector fix based on screenshots..."
+
+          # 1. Edit arch/arm64/Kconfig
+          # Cari "config STACKPROTECTOR_PER_TASK", pindah ke baris bawahnya, ganti "def_bool y" jadi "bool..."
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+
+          # 2. Disable di gki_defconfig
+          # Karena file target kita adalah gki_defconfig (bukan quartix), kita append setting disable ke situ.
+          echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
           
-          # Patch 2: Fix Stack Guard / Symbol Mismatch (from linastorvaldz)
-          curl -L "https://github.com/linastorvaldz/kernel-android14-6.1/commit/6199fedc164a9675435b14cef25a56f88a0c3413.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/linastorvaldz/kernel-android14-6.1/commit/6199fedc164a9675435b14cef25a56f88a0c3413.patch" | patch -p1
-          }
+          echo "✅ Stack Protector fix applied manually."
 
       - name: Apply inline patch for module.c and drm_atomic_helper.c
         run: |
