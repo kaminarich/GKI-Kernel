@@ -1,4 +1,4 @@
-name: KowSU Builder (AOSP + Clang 19/20)
+name: GKI KowSU Builder (Fixed Looping)
 
 on:
   workflow_dispatch:
@@ -48,7 +48,6 @@ jobs:
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache \
             cmake ninja-build
 
-      # --- SETUP CLANG (AOSP) ---
       - name: Setup Custom Clang
         run: |
           mkdir -p gki/prebuilts-master/clang/host/linux-x86
@@ -65,19 +64,13 @@ jobs:
           
           mkdir -p gki/prebuilts-master/clang/host/linux-x86/$CLANG_VER
           cd gki/prebuilts-master/clang/host/linux-x86
-          
-          echo "Downloading $CLANG_VER..."
           curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
-          
-          # Symlink ke default path
           ln -sf $CLANG_VER clang-r416183b
 
-      # --- INIT SOURCE (MURNI AOSP) ---
-      - name: Init Source
+      - name: Init Source (AOSP)
         run: |
           mkdir -p gki
           cd gki
-          # Repo init ke Google Source (Clean)
           repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
           repo sync -c -j$(nproc --all) --no-tags --fail-fast
 
@@ -85,8 +78,6 @@ jobs:
         run: |
           cd gki/common
           TARGET_VERSION="${{ github.event.inputs.target_version }}"
-          
-          # Cari commit di history AOSP
           CHECKOUT_COMMIT=$(git log --all --format=%H --grep="$TARGET_VERSION" | head -n 1)
           
           if [ -z "$CHECKOUT_COMMIT" ]; then
@@ -100,7 +91,6 @@ jobs:
         run: |
           sed -i '2d' gki/common/build.config.gki
 
-      # --- SETUP KOWSU (KERNELSU-NEXT) ---
       - name: Setup KowSU
         run: |
           cd gki/common
@@ -108,24 +98,18 @@ jobs:
           rm -rf drivers/staging/kernelsu
           git clone https://github.com/ramabondanp/KernelSU.git -b main drivers/staging/kernelsu
 
-      # --- CHERRY-PICK & FIXES ---
       - name: Apply Cherry-picks & Fixes
         run: |
           cd gki/common
           echo "Applying requested cherry-picks..."
-          
-          # Fix Task MMU
           curl -LSs "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || echo "CP 1 Skipped"
-          
-          # Fix Setlocalversion
           curl -LSs "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3 || echo "CP 2 Skipped"
 
-          # Fix Xiaomi Compatibility
+          echo "Applying Compatibility Fixes..."
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
 
-      # --- INJECT CONFIG KOWSU ---
       - name: Inject Defconfig
         run: |
           cd gki/common
@@ -180,28 +164,31 @@ jobs:
         run: |
           cd gki
           
-          # --- Set Kernel Name ---
           if [ -n "${{ github.event.inputs.kernel_name }}" ]; then
              echo "Custom Name: ${{ github.event.inputs.kernel_name }}"
              echo "EXTRAVERSION = -${{ github.event.inputs.kernel_name }}" >> common/Makefile
              
-             # Hapus config lama dan set baru
              sed -i '/^CONFIG_LOCALVERSION=/d' common/arch/arm64/configs/gki_defconfig
              echo 'CONFIG_LOCALVERSION="-${{ github.event.inputs.kernel_name }}"' >> common/arch/arm64/configs/gki_defconfig
              echo 'CONFIG_LOCALVERSION_AUTO=n' >> common/arch/arm64/configs/gki_defconfig
           fi
 
-          # --- Set Clang in Build Config ---
           if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
              SELECTED_CLANG="clang-r536225"
           else
              SELECTED_CLANG="clang-r547379"
           fi
           
-          # Hack build.config agar pakai Clang yg sudah didownload
           sed -i "s/clang-r[0-9]*[a-z]*/$SELECTED_CLANG/g" common/build.config.gki.aarch64
           sed -i "s/clang-r[0-9]*[a-z]*/$SELECTED_CLANG/g" common/build.config.common 2>/dev/null || true
           sed -i 's/check_defconfig//' common/build.config.gki
+
+      # --- FIX TIMESTAMP (Anti-Looping) ---
+      - name: Fix Source Timestamp
+        run: |
+          cd gki/common
+          echo "Resetting timestamps to prevent make infinite loop..."
+          find . -name "*.*" -exec touch {} +
 
       - name: Build Kernel
         run: |
@@ -211,7 +198,6 @@ jobs:
           export CCACHE_DIR="/tmp/ccache"
           ccache -M 5G
           
-          # Build Thin LTO
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Upload Image
