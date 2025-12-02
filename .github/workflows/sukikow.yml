@@ -14,10 +14,10 @@ on:
       clang_version:
         description: 'Pilih Versi Clang'
         required: true
-        default: 'r530567 (Clang 19)'
+        default: 'r536225 (Clang 19)'
         type: choice
         options:
-        - 'r530567 (Clang 19)'
+        - 'r536225 (Clang 19)'
         - 'r547379 (Clang 20)'
       target_version:
         description: 'Target Linux Version (Cth: Linux 5.10.233)'
@@ -56,20 +56,33 @@ jobs:
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache \
             cmake ninja-build
 
-      # --- SETUP CLANG (Pilihan 19/20) ---
+      # --- SETUP CLANG (User Requested URL Fix) ---
       - name: Setup Custom Clang
         run: |
-          if [ "${{ github.event.inputs.clang_version }}" == "r530567 (Clang 19)" ]; then
-            CLANG_VER="clang-r530567"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/master-kernel-build-2024/clang-r530567.tar.gz"
+          # Siapkan direktori prebuilts standar GKI
+          mkdir -p gki/prebuilts-master/clang/host/linux-x86
+          
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            echo "Setting up Clang-19 (r536225)..."
+            CLANG_VER="clang-r536225"
+            # URL Baru dari Anda
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           else
+            echo "Setting up Clang-20 (r547379)..."
             CLANG_VER="clang-r547379"
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
           fi
           
+          # Buat folder versi spesifik
           mkdir -p gki/prebuilts-master/clang/host/linux-x86/$CLANG_VER
           cd gki/prebuilts-master/clang/host/linux-x86
-          curl -L "$CLANG_URL" | tar -xz -C $CLANG_VER
+          
+          # Download dan Extract
+          echo "Downloading $CLANG_VER from $CLANG_URL ..."
+          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          
+          # Symlink Trick: Agar build system otomatis memakai versi ini
+          # Kita tipu build config yang biasanya mencari 'clang-r416183b' atau sejenisnya
           ln -sf $CLANG_VER clang-r416183b
 
       # --- INIT SOURCE ---
@@ -186,8 +199,6 @@ jobs:
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           
           # --- OPSI 1: CONFIG KHUSUS SUKISU ---
-          # Sesuai request: Network, TCP, UCLAMP, dan KPM=y.
-          # TIDAK ADA config susfs manual yang panjang.
           if [ "${{ github.event.inputs.ksu_variant }}" == "SukiSU" ]; then
              echo ">>> Injecting SukiSU Configs..."
              cat <<EOF >> "$DEFCONFIG"
@@ -216,7 +227,6 @@ jobs:
           fi
 
           # --- OPSI 2: CONFIG KHUSUS KOWSU ---
-          # KPM=n, KSU=y, dan Config Stealth Manual (Karena KowSU clone manual belum punya ini)
           if [ "${{ github.event.inputs.ksu_variant }}" == "KowSU" ]; then
              echo ">>> Injecting KowSU Configs..."
              cat <<EOF >> "$DEFCONFIG"
@@ -259,13 +269,14 @@ jobs:
              echo "EXTRAVERSION = -${{ github.event.inputs.kernel_name }}" >> common/Makefile
           fi
 
-          # Clang Version Replacement
-          if [ "${{ github.event.inputs.clang_version }}" == "r530567 (Clang 19)" ]; then
-             SELECTED_CLANG="clang-r530567"
+          # Tentukan versi clang yang dipilih untuk diedit di config
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+             SELECTED_CLANG="clang-r536225"
           else
              SELECTED_CLANG="clang-r547379"
           fi
           
+          # Ganti setting Clang di build.config agar sesuai dengan yang didownload
           sed -i "s/clang-r[0-9]*[a-z]*/$SELECTED_CLANG/g" common/build.config.gki.aarch64
           sed -i "s/clang-r[0-9]*[a-z]*/$SELECTED_CLANG/g" common/build.config.common 2>/dev/null || true
           sed -i 's/check_defconfig//' common/build.config.gki
