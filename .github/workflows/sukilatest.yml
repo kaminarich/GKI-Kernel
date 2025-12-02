@@ -78,7 +78,7 @@ jobs:
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
           }
 
-          # Patch 2: Fix from aosp-realm (cda3822)
+          # Patch 2: Fix from aosp-realm (Xiaomi SM8250 fix)
           curl -L "https://github.com/aosp-realm/android_kernel_xiaomi_sm8250/commit/cda3822c35d09778484ddbfa949ce8881a449ecf.patch" | git am -3 || {
              echo "git am failed, falling back to patch..."
              curl -L "https://github.com/aosp-realm/android_kernel_xiaomi_sm8250/commit/cda3822c35d09778484ddbfa949ce8881a449ecf.patch" | patch -p1
@@ -96,11 +96,21 @@ jobs:
           echo "Removing drm_atomic_check_valid_clones call..."
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
 
-      - name: Remove check_defconfig
+      - name: Remove check_defconfig and Fix Stack Guard
         run: |
-          echo "🧹 [8/9] delete check_defconfig"
           cd gki
+          echo "🧹 [Clean-Up] Deleting check_defconfig and fixing ABI Symbol List"
+          
+          # 1. Disable check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
+          
+          # 2. FIX STACK GUARD ABI ERROR
+          # Hapus __stack_chk_guard dari file list ABI (android/abi_gki_aarch64)
+          # Ini mencegah error "Symbols missing from ksymtab: - __stack_chk_guard"
+          find common/android -name "abi_gki_aarch64*" -type f -exec sed -i '/__stack_chk_guard/d' {} +
+          
+          # Jaga-jaga jika ada di abi_symbollist juga
+          find common/android -name "abi_symbollist*" -type f -exec sed -i '/__stack_chk_guard/d' {} +
 
       - name: Fix KernelSU and sus directory state
         run: |
