@@ -1,4 +1,4 @@
-Name: GKI Final Builder (SukiSU/KowSU Strict)
+name: GKI Final Builder (SukiSU/KowSU Strict)
 
 on:
   workflow_dispatch:
