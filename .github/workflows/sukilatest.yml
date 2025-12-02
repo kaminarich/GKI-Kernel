@@ -78,11 +78,6 @@ jobs:
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
           }
 
-          # Patch 2: Fix from aosp-realm (Xiaomi SM8250 fix)
-          curl -L "https://github.com/aosp-realm/android_kernel_xiaomi_sm8250/commit/cda3822c35d09778484ddbfa949ce8881a449ecf.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/aosp-realm/android_kernel_xiaomi_sm8250/commit/cda3822c35d09778484ddbfa949ce8881a449ecf.patch" | patch -p1
-          }
 
       - name: Apply inline patch for module.c and drm_atomic_helper.c
         run: |
