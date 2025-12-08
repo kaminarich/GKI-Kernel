@@ -1,4 +1,4 @@
-name: 2 Suki Latest
+Name: Suki Latest
 
 on:
   workflow_dispatch:
@@ -44,104 +44,99 @@ jobs:
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
 
-      - name: Create and Init GKI Source
+      - name: Create and Init GKI Source (Shallow)
         run: |
           mkdir gki && cd gki
-          # 1. Init GKI standar
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-          # 2. Ganti source kernel 'common' ke repo ramabondanp
-          cd common
-          echo "🔄 Switching source to ramabondanp/android_kernel_common-5.10..."
-          git fetch https://github.com/ramabondanp/android_kernel_common-5.10.git android12-5.10 --depth=500
-          git checkout FETCH_HEAD
-
-      - name: Checkout Specific Commit
-        working-directory: gki/common
-        run: |
-          echo "🔄 Checking out specific commit: 881fa16053f55c4f7e007ddf0c02e22b569993df"
-          git checkout 881fa16053f55c4f7e007ddf0c02e22b569993df
-
-      - name: Setup Custom Clang (Fix Path Error)
-        working-directory: gki
-        run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86
-          
-          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
-            CLANG_VER="clang-r536225"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
-          else
-            CLANG_VER="clang-r547379"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
-          fi
-          
-          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
-
-          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
-          cd prebuilts-master/clang/host/linux-x86
-          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
-          
-          # FIX UTAMA: Buat symlink untuk versi yang dicari oleh build.config (r563880b)
-          # Mengarahkannya ke versi custom yang baru saja kita download
-          ln -sf $CLANG_VER clang-r563880b
-          
-          # Backup: Buat juga symlink untuk versi generic (jaga-jaga)
-          rm -rf clang-r416183b
-          ln -sf $CLANG_VER clang-r416183b
-          
-          echo "✅ Clang setup complete. Symlinked clang-r563880b -> $CLANG_VER"
-
-      - name: Clean Ghost KSU (Prevent Makefile Error)
-        working-directory: gki/common
-        run: |
-          # Hapus referensi KernelSU yang rusak di drivers/staging/Makefile sebelum setup baru
-          if [ -f drivers/staging/Makefile ]; then
-            sed -i '/kernelsu/d' drivers/staging/Makefile
-          fi
-
-      - name: Setup KernelSU Driver Only
+      # --- NEW STEP ADDED HERE ---
+      - name: Apply Rama Cherry-Pick (881fa16)
         run: |
           cd gki/common
-          echo "Installing KernelSU Driver..."
+          echo "Applying commit 881fa16 from Ramabondanp..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" | git am -3
+      # ---------------------------
+
+      - name: Delete Line 2 in build.config.gki
+        run: |
+          sed -i '2d' gki/common/build.config.gki
+
+      - name: Apply SukiSU Patch
+        run: |
+          cd gki/common
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
+          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
+          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+          rm -rf sus/.git
+          susfs=sus/kernel_patches
+          cp -r $susfs/fs .
+          cp -r $susfs/include .
+          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+
+      - name: Apply Extra Cherry-Picks
+        working-directory: gki/common
+        run: |
+          echo "Applying requested cherry-picks..."
+          
+          # Patch 1: Common 5.10 update/fix
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
+             echo "git am failed, falling back to patch..."
+             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
+          }
 
       - name: Apply Manual Stack Protector Fix
         working-directory: gki/common
         run: |
-          if [ -f arch/arm64/Kconfig ]; then
-            sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
-          fi
+          echo "🛠️ Applying manual Stack Protector fix based on screenshots..."
+
+          # 1. Edit arch/arm64/Kconfig
+          sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
+
+          # 2. Disable di gki_defconfig
           echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
+          
+          echo "✅ Stack Protector fix applied manually."
 
       - name: Apply inline patch for module.c and drm_atomic_helper.c
         run: |
           cd gki
+          echo "patching module.c (change version mismatch to return 1)"
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
-          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
-          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
+          
+          echo "removing drm_atomic_check valid_clones"
+          sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c
+          
+          echo "Removing drm_atomic_check_valid_clones call..."
+          sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
 
       - name: Remove check_defconfig
         run: |
           cd gki
-          if [ -f common/build.config.gki ]; then
-            sed -i 's/check_defconfig//' common/build.config.gki
-          fi
+          echo "🧹 [Clean-Up] Deleting check_defconfig"
+          sed -i 's/check_defconfig//' ./common/build.config.gki
 
-      - name: Fix KernelSU directory state
+      - name: Fix KernelSU and sus directory state
         run: |
           cd gki/common
           rm -rf KernelSU/.git
+          rm -rf sus/.git
           git rm --cached --ignore-unmatch -r KernelSU
+          git rm --cached --ignore-unmatch -r sus
           git add KernelSU
-          git commit -m "Inject KernelSU manually" || true
+          git add sus
+          git commit -m "Inject KernelSU & SUSFS manually" || true
 
       - name: Add Custom Network & FS Configs
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
+          echo "Injecting custom configs to $DEFCONFIG"
+          
           # --- KSU & KPM Configs ---
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KPM=y" >> $DEFCONFIG
+
           # --- Custom Network & FS ---
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
@@ -161,18 +156,47 @@ jobs:
           cd gki/common
           echo "" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
+          
           KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
+
           if [ -n "$KERNEL_NAME" ]; then
+             echo "Setting custom kernel name: $KERNEL_NAME"
              if grep -q '^EXTRAVERSION *=' Makefile; then
                sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
              else
                echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
              fi
+          else
+             echo "Kernel name input is empty. Skipping custom name (Using Default)."
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
         run: |
           echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
+
+      - name: Setup Custom Clang
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            echo "Setting up Clang-19 (r536225)..."
+            CLANG_VER="clang-r536225"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          else
+            echo "Setting up Clang-20 (r547379)..."
+            CLANG_VER="clang-r547379"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          
+          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
+
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          cd prebuilts-master/clang/host/linux-x86
+          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          
+          rm -rf clang-r416183b
+          ln -sf $CLANG_VER clang-r416183b
 
       - name: Final Clean Tree Commit
         run: |
@@ -183,17 +207,25 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          # Build GKI
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Apply KPM Patch
         run: |
           cd gki/out/android12-5.10/common/arch/arm64/boot/
           if [ -f Image ]; then
+            echo "Image found, applying KPM patch..."
             curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
             chmod 777 patch
             ./patch
-            [ -f oImage ] && mv -f oImage Image
+            if [ -f oImage ]; then
+              mv -f oImage Image
+              ls -lh Image
+            else
+              echo "Error: oImage not found!"
+              exit 1
+            fi
+          else
+            echo "Image file not found. Skipping KPM patch."
           fi
 
       - name: Upload Kernel Image to GitHub Artifacts
@@ -211,4 +243,6 @@ jobs:
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
+          else
+            echo "Image file not found. Build likely failed."
           fi
