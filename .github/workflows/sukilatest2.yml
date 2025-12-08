@@ -1,4 +1,4 @@
-Name: 2 Suki Latest
+name: 2 Suki Latest
 
 on:
   workflow_dispatch:
