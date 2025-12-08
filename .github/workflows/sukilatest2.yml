@@ -54,15 +54,16 @@ jobs:
           # 2. Ganti source kernel 'common' ke repo ramabondanp
           cd common
           echo "🔄 Switching source to ramabondanp/android_kernel_common-5.10..."
-          git fetch https://github.com/ramabondanp/android_kernel_common-5.10.git android12-5.10
+          # Fetch history secukupnya agar commit hash terbaca (depth=500 untuk jaga-jaga)
+          git fetch https://github.com/ramabondanp/android_kernel_common-5.10.git android12-5.10 --depth=500
           git checkout FETCH_HEAD
-          git checkout -b build-v5.10
 
-      - name: Apply Requested Commit (Critical)
+      - name: Checkout Specific Commit (Fix Conflict)
         working-directory: gki/common
         run: |
-          echo "Applying commit 881fa16053f55c4f7e007ddf0c02e22b569993df..."
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16053f55c4f7e007ddf0c02e22b569993df.patch" | git am -3
+          echo "🔄 Checking out specific commit: 881fa16053f55c4f7e007ddf0c02e22b569993df"
+          # Langsung pindah ke commit tujuan tanpa patching manual
+          git checkout 881fa16053f55c4f7e007ddf0c02e22b569993df
 
       - name: Fix Build Environment (Clang & Clean Ghost KSU)
         working-directory: gki/common
