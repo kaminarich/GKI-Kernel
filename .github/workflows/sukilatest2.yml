@@ -1,4 +1,4 @@
-Name: Suki Latest
+name: 2 Suki Latest
 
 on:
   workflow_dispatch:
@@ -50,13 +50,11 @@ jobs:
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-      # --- NEW STEP ADDED HERE ---
       - name: Apply Rama Cherry-Pick (881fa16)
         run: |
           cd gki/common
           echo "Applying commit 881fa16 from Ramabondanp..."
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" | git am -3
-      # ---------------------------
 
       - name: Delete Line 2 in build.config.gki
         run: |
