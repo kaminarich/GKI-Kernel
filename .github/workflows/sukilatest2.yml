@@ -47,30 +47,64 @@ jobs:
       - name: Create and Init GKI Source
         run: |
           mkdir gki && cd gki
-          # 1. Init GKI standar untuk mendapatkan struktur build, prebuilts & toolchain
+          # 1. Init GKI standar
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
           # 2. Ganti source kernel 'common' ke repo ramabondanp
           cd common
           echo "🔄 Switching source to ramabondanp/android_kernel_common-5.10..."
-          
-          # Fetch langsung dari repo target
           git fetch https://github.com/ramabondanp/android_kernel_common-5.10.git android12-5.10
-          
-          # Checkout ke hasil fetch (source baru)
           git checkout FETCH_HEAD
-          
-          # Buat branch lokal baru biar bersih
           git checkout -b build-v5.10
 
-      - name: Delete Line 2 in build.config.gki
+      - name: Setup Custom Clang
+        working-directory: gki
         run: |
-          # Cek dulu apakah file ada sebelum sed, untuk jaga-jaga
-          if [ -f gki/common/build.config.gki ]; then
-             sed -i '2d' gki/common/build.config.gki
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            echo "Setting up Clang-19 (r536225)..."
+            CLANG_VER="clang-r536225"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           else
-             echo "⚠️ build.config.gki not found in custom repo, skipping sed."
+            echo "Setting up Clang-20 (r547379)..."
+            CLANG_VER="clang-r547379"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          
+          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
+
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          cd prebuilts-master/clang/host/linux-x86
+          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          
+          # Hapus symlink lama jika ada
+          rm -rf clang-r416183b
+          # Symlink versi pilihan kita ke nama generic 'clang-r416183b'
+          ln -sf $CLANG_VER clang-r416183b
+
+      - name: Fix Clang Version & Clean Ghost KSU
+        working-directory: gki/common
+        run: |
+          echo "🔧 Fixing Build Environment..."
+
+          # 1. FIX CLANG: Paksa build config menggunakan clang-r416183b (symlink kita)
+          # Kita mengganti baris CLANG_VERSION=... menjadi CLANG_VERSION=r416183b di semua build.config
+          find . -name "build.config*" -exec sed -i 's/^CLANG_VERSION=.*/CLANG_VERSION=r416183b/' {} +
+          
+          # 2. FIX KSU GHOST: Hapus referensi KernelSU yang rusak di drivers/staging/Makefile
+          if [ -f drivers/staging/Makefile ]; then
+            echo "Cleaning broken KernelSU refs in drivers/staging/Makefile..."
+            sed -i '/kernelsu/d' drivers/staging/Makefile
+          fi
+          
+          # Hapus folder staging/kernelsu jika ada tapi kosong/rusak
+          rm -rf drivers/staging/kernelsu
+
+          # 3. Hapus baris ke-2 di build.config.gki (sesuai request lama)
+          if [ -f build.config.gki ]; then
+             sed -i '2d' build.config.gki
           fi
 
       - name: Apply SukiSU Patch
@@ -85,38 +119,30 @@ jobs:
           cp -r $susfs/include .
           cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
           
-          # Gunakan patch dengan error handling
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch warning: check logs, conflicts might exist."
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch warning: check logs."
 
       - name: Apply Manual Stack Protector Fix
         working-directory: gki/common
         run: |
-          echo "🛠️ Applying manual Stack Protector fix based on screenshots..."
-          
+          echo "🛠️ Applying manual Stack Protector fix..."
           if [ -f arch/arm64/Kconfig ]; then
             sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           fi
-
           echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
-          echo "✅ Stack Protector fix applied manually."
 
       - name: Apply inline patch for module.c and drm_atomic_helper.c
         run: |
           cd gki
-          echo "patching module.c (change version mismatch to return 1)"
+          echo "patching module.c..."
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
           
-          echo "removing drm_atomic_check valid_clones"
+          echo "patching drm_atomic_helper.c..."
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
-          
-          echo "Removing drm_atomic_check_valid_clones call..."
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
 
       - name: Remove check_defconfig
         run: |
           cd gki
-          echo "🧹 [Clean-Up] Deleting check_defconfig"
-          # Gunakan path relatif dari root workspace atau cd dulu
           if [ -f common/build.config.gki ]; then
             sed -i 's/check_defconfig//' common/build.config.gki
           fi
@@ -164,43 +190,16 @@ jobs:
           KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
 
           if [ -n "$KERNEL_NAME" ]; then
-             echo "Setting custom kernel name: $KERNEL_NAME"
              if grep -q '^EXTRAVERSION *=' Makefile; then
                sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
              else
                echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
              fi
-          else
-             echo "Kernel name input is empty. Skipping custom name (Using Default)."
           fi
 
       - name: Append CONFIG_HZ_300 to defconfig
         run: |
           echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
-
-      - name: Setup Custom Clang
-        working-directory: gki
-        run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86
-          
-          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
-            echo "Setting up Clang-19 (r536225)..."
-            CLANG_VER="clang-r536225"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
-          else
-            echo "Setting up Clang-20 (r547379)..."
-            CLANG_VER="clang-r547379"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
-          fi
-          
-          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
-
-          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
-          cd prebuilts-master/clang/host/linux-x86
-          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
-          
-          rm -rf clang-r416183b
-          ln -sf $CLANG_VER clang-r416183b
 
       - name: Final Clean Tree Commit
         run: |
@@ -211,6 +210,7 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
+          # Pastikan LTO thin
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Apply KPM Patch
@@ -224,9 +224,6 @@ jobs:
             if [ -f oImage ]; then
               mv -f oImage Image
               ls -lh Image
-            else
-              echo "Error: oImage not found!"
-              exit 1
             fi
           else
             echo "Image file not found. Skipping KPM patch."
@@ -247,6 +244,4 @@ jobs:
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
-          else
-            echo "Image file not found. Build likely failed."
           fi
