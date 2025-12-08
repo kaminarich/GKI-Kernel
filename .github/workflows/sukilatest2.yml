@@ -58,53 +58,21 @@ jobs:
           git checkout FETCH_HEAD
           git checkout -b build-v5.10
 
-      - name: Setup Custom Clang
-        working-directory: gki
-        run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86
-          
-          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
-            echo "Setting up Clang-19 (r536225)..."
-            CLANG_VER="clang-r536225"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
-          else
-            echo "Setting up Clang-20 (r547379)..."
-            CLANG_VER="clang-r547379"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
-          fi
-          
-          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
-
-          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
-          cd prebuilts-master/clang/host/linux-x86
-          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
-          
-          # Hapus symlink lama jika ada
-          rm -rf clang-r416183b
-          # Symlink versi pilihan kita ke nama generic 'clang-r416183b'
-          ln -sf $CLANG_VER clang-r416183b
-
-      - name: Fix Clang Version & Clean Ghost KSU
+      - name: Apply Requested Commit (Critical)
         working-directory: gki/common
         run: |
-          echo "🔧 Fixing Build Environment..."
+          echo "Applying commit 881fa16053f55c4f7e007ddf0c02e22b569993df..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16053f55c4f7e007ddf0c02e22b569993df.patch" | git am -3
 
-          # 1. FIX CLANG: Paksa build config menggunakan clang-r416183b (symlink kita)
-          # Kita mengganti baris CLANG_VERSION=... menjadi CLANG_VERSION=r416183b di semua build.config
+      - name: Fix Build Environment (Clang & Clean Ghost KSU)
+        working-directory: gki/common
+        run: |
+          # Fix 1: Paksa build.config pakai versi Clang yang kita download (r416183b)
           find . -name "build.config*" -exec sed -i 's/^CLANG_VERSION=.*/CLANG_VERSION=r416183b/' {} +
           
-          # 2. FIX KSU GHOST: Hapus referensi KernelSU yang rusak di drivers/staging/Makefile
+          # Fix 2: Hapus referensi KernelSU yang rusak di drivers/staging/Makefile agar mrproper tidak error
           if [ -f drivers/staging/Makefile ]; then
-            echo "Cleaning broken KernelSU refs in drivers/staging/Makefile..."
             sed -i '/kernelsu/d' drivers/staging/Makefile
-          fi
-          
-          # Hapus folder staging/kernelsu jika ada tapi kosong/rusak
-          rm -rf drivers/staging/kernelsu
-
-          # 3. Hapus baris ke-2 di build.config.gki (sesuai request lama)
-          if [ -f build.config.gki ]; then
-             sed -i '2d' build.config.gki
           fi
 
       - name: Apply SukiSU Patch
@@ -119,12 +87,11 @@ jobs:
           cp -r $susfs/include .
           cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
           
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch warning: check logs."
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch warning."
 
       - name: Apply Manual Stack Protector Fix
         working-directory: gki/common
         run: |
-          echo "🛠️ Applying manual Stack Protector fix..."
           if [ -f arch/arm64/Kconfig ]; then
             sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           fi
@@ -133,10 +100,7 @@ jobs:
       - name: Apply inline patch for module.c and drm_atomic_helper.c
         run: |
           cd gki
-          echo "patching module.c..."
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
-          
-          echo "patching drm_atomic_helper.c..."
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
 
@@ -161,12 +125,9 @@ jobs:
       - name: Add Custom Network & FS Configs
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
-          echo "Injecting custom configs to $DEFCONFIG"
-          
           # --- KSU & KPM Configs ---
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KPM=y" >> $DEFCONFIG
-
           # --- Custom Network & FS ---
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
@@ -186,9 +147,7 @@ jobs:
           cd gki/common
           echo "" > scripts/setlocalversion
           chmod +x scripts/setlocalversion
-          
           KERNEL_NAME="${{ github.event.inputs.kernel_name }}"
-
           if [ -n "$KERNEL_NAME" ]; then
              if grep -q '^EXTRAVERSION *=' Makefile; then
                sed -i "s/^EXTRAVERSION *=.*/EXTRAVERSION = -$KERNEL_NAME/" Makefile
@@ -201,6 +160,24 @@ jobs:
         run: |
           echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
 
+      - name: Setup Custom Clang
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            CLANG_VER="clang-r536225"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          else
+            CLANG_VER="clang-r547379"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          cd prebuilts-master/clang/host/linux-x86
+          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          rm -rf clang-r416183b
+          ln -sf $CLANG_VER clang-r416183b
+
       - name: Final Clean Tree Commit
         run: |
           cd gki/common
@@ -210,23 +187,16 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
-          # Pastikan LTO thin
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Apply KPM Patch
         run: |
           cd gki/out/android12-5.10/common/arch/arm64/boot/
           if [ -f Image ]; then
-            echo "Image found, applying KPM patch..."
             curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
             chmod 777 patch
             ./patch
-            if [ -f oImage ]; then
-              mv -f oImage Image
-              ls -lh Image
-            fi
-          else
-            echo "Image file not found. Skipping KPM patch."
+            [ -f oImage ] && mv -f oImage Image
           fi
 
       - name: Upload Kernel Image to GitHub Artifacts
