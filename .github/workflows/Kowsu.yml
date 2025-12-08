@@ -82,7 +82,7 @@ jobs:
           # Upstream to 5.10.246 logic
           git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
           git fetch -j12 rama
-          git checkout -b update-5.10.246 rama/android12-5.10-staging
+          git checkout -b update-5.10.247 rama/android12-5.10-staging
           
           # Setup KernelSU-Next
           rm -rf drivers/staging/kernelsu
