@@ -54,15 +54,13 @@ jobs:
           # 2. Ganti source kernel 'common' ke repo ramabondanp
           cd common
           echo "🔄 Switching source to ramabondanp/android_kernel_common-5.10..."
-          # Fetch history secukupnya agar commit hash terbaca (depth=500 untuk jaga-jaga)
           git fetch https://github.com/ramabondanp/android_kernel_common-5.10.git android12-5.10 --depth=500
           git checkout FETCH_HEAD
 
-      - name: Checkout Specific Commit (Fix Conflict)
+      - name: Checkout Specific Commit
         working-directory: gki/common
         run: |
           echo "🔄 Checking out specific commit: 881fa16053f55c4f7e007ddf0c02e22b569993df"
-          # Langsung pindah ke commit tujuan tanpa patching manual
           git checkout 881fa16053f55c4f7e007ddf0c02e22b569993df
 
       - name: Fix Build Environment (Clang & Clean Ghost KSU)
@@ -71,24 +69,19 @@ jobs:
           # Fix 1: Paksa build.config pakai versi Clang yang kita download (r416183b)
           find . -name "build.config*" -exec sed -i 's/^CLANG_VERSION=.*/CLANG_VERSION=r416183b/' {} +
           
-          # Fix 2: Hapus referensi KernelSU yang rusak di drivers/staging/Makefile agar mrproper tidak error
+          # Fix 2: Hapus referensi KernelSU yang rusak/lama di drivers/staging/Makefile
+          # Kita hapus dulu agar setup.sh nanti bisa menulis ulang dengan bersih
           if [ -f drivers/staging/Makefile ]; then
             sed -i '/kernelsu/d' drivers/staging/Makefile
           fi
 
-      - name: Apply SukiSU Patch
+      - name: Setup KernelSU Driver Only
         run: |
           cd gki/common
+          echo "Installing KernelSU Driver..."
+          # Kita hanya menjalankan setup 'main' untuk meletakkan driver di drivers/staging/kernelsu
+          # Kita SKIP patching SUSFS karena log menunjukkan source code sudah memiliki patch tersebut.
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
-          rm -rf sus/.git
-          susfs=sus/kernel_patches
-          cp -r $susfs/fs .
-          cp -r $susfs/include .
-          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
-          
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch warning."
 
       - name: Apply Manual Stack Protector Fix
         working-directory: gki/common
@@ -112,16 +105,13 @@ jobs:
             sed -i 's/check_defconfig//' common/build.config.gki
           fi
 
-      - name: Fix KernelSU and sus directory state
+      - name: Fix KernelSU directory state
         run: |
           cd gki/common
           rm -rf KernelSU/.git
-          rm -rf sus/.git
           git rm --cached --ignore-unmatch -r KernelSU
-          git rm --cached --ignore-unmatch -r sus
           git add KernelSU
-          git add sus
-          git commit -m "Inject KernelSU & SUSFS manually" || true
+          git commit -m "Inject KernelSU manually" || true
 
       - name: Add Custom Network & FS Configs
         run: |
