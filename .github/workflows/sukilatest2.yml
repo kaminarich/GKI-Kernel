@@ -44,41 +44,34 @@ jobs:
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
             libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
 
-      - name: Create and Init GKI Source (Switch to v5.10.247)
+      - name: Create and Init GKI Source
         run: |
           mkdir gki && cd gki
-          # 1. Init GKI standar untuk mendapatkan struktur build & prebuilts
+          # 1. Init GKI standar untuk mendapatkan struktur build, prebuilts & toolchain
           repo init -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10 --depth=1
           repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-          # 2. Masuk ke direktori kernel
+          # 2. Ganti source kernel 'common' ke repo ramabondanp
           cd common
+          echo "🔄 Switching source to ramabondanp/android_kernel_common-5.10..."
           
-          # 3. BACKUP konfigurasi penting GKI (Karena upstream linux tidak punya file ini)
-          echo "⚠️ Backing up GKI configurations..."
-          cp build.config.gki /tmp/build.config.gki
-          cp build.config.gki.aarch64 /tmp/build.config.gki.aarch64
-          cp arch/arm64/configs/gki_defconfig /tmp/gki_defconfig
-
-          # 4. Fetch dan Checkout ke v5.10.247 Upstream
-          echo "🔄 Switching source to Linux Upstream v5.10.247..."
-          git remote add upstream https://git.kernel.org/pub/scm/linux/kernel/git/stable/linux.git
-          git fetch upstream v5.10.247
+          # Fetch langsung dari repo target
+          git fetch https://github.com/ramabondanp/android_kernel_common-5.10.git android12-5.10
+          
+          # Checkout ke hasil fetch (source baru)
           git checkout FETCH_HEAD
-
-          # 5. RESTORE konfigurasi GKI
-          echo "✅ Restoring GKI configurations..."
-          cp /tmp/build.config.gki build.config.gki
-          cp /tmp/build.config.gki.aarch64 build.config.gki.aarch64
-          cp /tmp/gki_defconfig arch/arm64/configs/gki_defconfig
           
-          # Pastikan file configs ter-add (jika perlu patching selanjutnya)
-          git add build.config.gki build.config.gki.aarch64 arch/arm64/configs/gki_defconfig
-          git commit -m "Restore GKI configs on top of v5.10.247" || true
+          # Buat branch lokal baru biar bersih
+          git checkout -b build-v5.10
 
       - name: Delete Line 2 in build.config.gki
         run: |
-          sed -i '2d' gki/common/build.config.gki
+          # Cek dulu apakah file ada sebelum sed, untuk jaga-jaga
+          if [ -f gki/common/build.config.gki ]; then
+             sed -i '2d' gki/common/build.config.gki
+          else
+             echo "⚠️ build.config.gki not found in custom repo, skipping sed."
+          fi
 
       - name: Apply SukiSU Patch
         run: |
@@ -91,26 +84,15 @@ jobs:
           cp -r $susfs/fs .
           cp -r $susfs/include .
           cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
-          # Gunakan patch -f (force) atau handling error karena upstream mungkin beda sedikit
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "Patch warning: check logs"
-
-      - name: Apply Extra Cherry-Picks
-        working-directory: gki/common
-        run: |
-          echo "Applying requested cherry-picks..."
           
-          # Patch 1: Common 5.10 update/fix
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
-          }
+          # Gunakan patch dengan error handling
+          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch || echo "⚠️ Patch warning: check logs, conflicts might exist."
 
       - name: Apply Manual Stack Protector Fix
         working-directory: gki/common
         run: |
           echo "🛠️ Applying manual Stack Protector fix based on screenshots..."
           
-          # Cek keberadaan file sebelum sed agar tidak error
           if [ -f arch/arm64/Kconfig ]; then
             sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
           fi
@@ -124,7 +106,6 @@ jobs:
           echo "patching module.c (change version mismatch to return 1)"
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
           
-          # Note: drm_atomic_helper mungkin berbeda di upstream murni, kita beri '|| true' agar tidak stop jika tidak ketemu
           echo "removing drm_atomic_check valid_clones"
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c || true
           
@@ -135,7 +116,10 @@ jobs:
         run: |
           cd gki
           echo "🧹 [Clean-Up] Deleting check_defconfig"
-          sed -i 's/check_defconfig//' ./common/build.config.gki
+          # Gunakan path relatif dari root workspace atau cd dulu
+          if [ -f common/build.config.gki ]; then
+            sed -i 's/check_defconfig//' common/build.config.gki
+          fi
 
       - name: Fix KernelSU and sus directory state
         run: |
