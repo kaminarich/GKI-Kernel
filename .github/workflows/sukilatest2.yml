@@ -63,14 +63,39 @@ jobs:
           echo "🔄 Checking out specific commit: 881fa16053f55c4f7e007ddf0c02e22b569993df"
           git checkout 881fa16053f55c4f7e007ddf0c02e22b569993df
 
-      - name: Fix Build Environment (Clang & Clean Ghost KSU)
+      - name: Setup Custom Clang (Fix Path Error)
+        working-directory: gki
+        run: |
+          mkdir -p prebuilts-master/clang/host/linux-x86
+          
+          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
+            CLANG_VER="clang-r536225"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
+          else
+            CLANG_VER="clang-r547379"
+            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
+          fi
+          
+          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
+
+          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
+          cd prebuilts-master/clang/host/linux-x86
+          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
+          
+          # FIX UTAMA: Buat symlink untuk versi yang dicari oleh build.config (r563880b)
+          # Mengarahkannya ke versi custom yang baru saja kita download
+          ln -sf $CLANG_VER clang-r563880b
+          
+          # Backup: Buat juga symlink untuk versi generic (jaga-jaga)
+          rm -rf clang-r416183b
+          ln -sf $CLANG_VER clang-r416183b
+          
+          echo "✅ Clang setup complete. Symlinked clang-r563880b -> $CLANG_VER"
+
+      - name: Clean Ghost KSU (Prevent Makefile Error)
         working-directory: gki/common
         run: |
-          # Fix 1: Paksa build.config pakai versi Clang yang kita download (r416183b)
-          find . -name "build.config*" -exec sed -i 's/^CLANG_VERSION=.*/CLANG_VERSION=r416183b/' {} +
-          
-          # Fix 2: Hapus referensi KernelSU yang rusak/lama di drivers/staging/Makefile
-          # Kita hapus dulu agar setup.sh nanti bisa menulis ulang dengan bersih
+          # Hapus referensi KernelSU yang rusak di drivers/staging/Makefile sebelum setup baru
           if [ -f drivers/staging/Makefile ]; then
             sed -i '/kernelsu/d' drivers/staging/Makefile
           fi
@@ -79,8 +104,6 @@ jobs:
         run: |
           cd gki/common
           echo "Installing KernelSU Driver..."
-          # Kita hanya menjalankan setup 'main' untuk meletakkan driver di drivers/staging/kernelsu
-          # Kita SKIP patching SUSFS karena log menunjukkan source code sudah memiliki patch tersebut.
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
 
       - name: Apply Manual Stack Protector Fix
@@ -151,24 +174,6 @@ jobs:
         run: |
           echo -e '\nCONFIG_HZ_300=y\nCONFIG_HZ=300' >> gki/common/arch/arm64/configs/gki_defconfig
 
-      - name: Setup Custom Clang
-        working-directory: gki
-        run: |
-          mkdir -p prebuilts-master/clang/host/linux-x86
-          if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
-            CLANG_VER="clang-r536225"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
-          else
-            CLANG_VER="clang-r547379"
-            CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
-          fi
-          echo "CLANG_VER=$CLANG_VER" >> $GITHUB_ENV
-          mkdir -p prebuilts-master/clang/host/linux-x86/$CLANG_VER
-          cd prebuilts-master/clang/host/linux-x86
-          curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
-          rm -rf clang-r416183b
-          ln -sf $CLANG_VER clang-r416183b
-
       - name: Final Clean Tree Commit
         run: |
           cd gki/common
@@ -178,6 +183,7 @@ jobs:
       - name: Build Kernel
         run: |
           cd gki
+          # Build GKI
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
 
       - name: Apply KPM Patch
