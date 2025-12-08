@@ -53,8 +53,19 @@ jobs:
       - name: Apply Rama Cherry-Pick (881fa16)
         run: |
           cd gki/common
-          echo "Applying commit 881fa16 from Ramabondanp..."
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" | git am -3
+          echo "Downloading commit 881fa16..."
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/881fa16.patch" -o rama.patch
+          
+          echo "Attempting git am..."
+          if git am -3 < rama.patch; then
+            echo "✅ git am succeeded."
+          else
+            echo "⚠️ git am failed (likely SHA1 mismatch). Aborting and trying patch -p1..."
+            git am --abort
+            patch -p1 --fuzz=3 < rama.patch
+            echo "✅ Applied via patch -p1."
+          fi
+          rm rama.patch
 
       - name: Delete Line 2 in build.config.gki
         run: |
