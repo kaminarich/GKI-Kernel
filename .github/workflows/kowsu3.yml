@@ -1,4 +1,4 @@
-name: KowSU 2
+name: KowSU 3
 
 on:
   workflow_dispatch:
