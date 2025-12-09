@@ -1,4 +1,4 @@
-Name: KowSU 3 Fixed
+name: KowSU 3 Fixed
 
 on:
   workflow_dispatch:
