@@ -1,10 +1,10 @@
-name: KowSU 3
+Name: KowSU 3
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel (Optional)'
+        description: 'Nama Kernel (Opsional)'
         required: false
         default: ''
       clang_version:
@@ -72,7 +72,7 @@ jobs:
           cd prebuilts-master/clang/host/linux-x86
           curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
           
-          # Fix Symlink untuk kompatibilitas script build
+          # Fix Symlink for build script compatibility
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
@@ -86,43 +86,52 @@ jobs:
           # Checkout branch staging
           git checkout -b update-5.10.247 rama/android12-5.10-staging
 
-          # INIT & UPDATE SUBMODULE (Fix: Menggunakan Submodule bawaan upstream)
+          # INIT & UPDATE SUBMODULE
           echo "Updating KernelSU submodule..."
           git submodule update --init --recursive drivers/staging/kernelsu
 
-          echo "KernelSU submodule updated"
+          echo "✅ KernelSU submodule updated"
 
       - name: Apply Patches
         working-directory: gki/common
         run: |
-          # Xiaomi Compatibility
+          echo "--- Starting Kernel Source Patching ---"
+          
+          # Xiaomi Compatibility Patches
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+          echo "✅ Patch: Xiaomi compatibility applied."
           
-          # --- TWEAK: Set Default Swappiness to 100 ---
-          echo "Patching vm_swappiness to 100..."
-          sed -i 's/int vm_swappiness = 60;/int vm_swappiness = 100;/g' mm/vmscan.c
+          # --- PERFORMANCE SOURCE TWEAKS (ROBUST REGEX METHOD) ---
+          
+          # 1. Set Default Swappiness to 100 (Aggressive Swap)
+          # Menggunakan regex [0-9]* agar angka berapapun yg ada diganti jadi 100
+          sed -i 's/int vm_swappiness = [0-9]*;/int vm_swappiness = 100;/g' mm/vmscan.c
+          echo "✅ Tweak: vm_swappiness patched to 100 (using regex)."
 
-      - name: Configure Defconfig
+          # 2. Retain VFS Cache Longer (vfs_cache_pressure = 50)
+          # Menggunakan regex [0-9]* agar angka berapapun yg ada diganti jadi 50
+          sed -i 's/int sysctl_vfs_cache_pressure = [0-9]*;/int sysctl_vfs_cache_pressure = 50;/g' fs/dcache.c 2>/dev/null || true
+          echo "✅ Tweak: vfs_cache_pressure patched to 50 (using regex)."
+
+      - name: Configure Defconfig (Optimized)
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           
           cat <<EOF >> "$DEFCONFIG"
-          # KernelSU Configuration
+          # --- KernelSU & General Setup ---
           CONFIG_KSU=y
           CONFIG_KPM=n
           CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_KPROBES_HOOK=n
-
-          # ZRAM & SWAP Configuration (Required for ZRAM 4GB setup via Userspace)
           CONFIG_SWAP=y
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
           CONFIG_ZRAM_DEF_COMP_LZ4=y 
-          
-          # SUSFS Configuration
+
+          # --- SUSFS Configuration ---
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
           CONFIG_KSU_SUSFS_SUS_PATH=y
@@ -138,46 +147,96 @@ jobs:
           CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
           CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
           CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
-          CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
-          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
-          CONFIG_ENERGY_MODEL=y
           CONFIG_KSU_SUSFS_SUS_SU=y
           CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
+
+          # --- PERFORMANCE & EFFICIENCY OPTIMIZATIONS ---
+          
+          # 1. Reduce Overhead (Disable Debugging & Logging)
+          CONFIG_PRINTK_TIME=n
+          CONFIG_DYNAMIC_DEBUG=n
+          CONFIG_DEBUG_INFO=n
+          CONFIG_DEBUG_FS=n
+          CONFIG_DEBUG_KERNEL=n
+          CONFIG_SLUB_DEBUG=n
+          CONFIG_FRAME_POINTER=n
+
+          # 2. CPU Scheduling & Latency (UI Responsiveness & Gaming)
           CONFIG_HZ_300=y
-          CONFIG_CPU_FREQ=y
+          CONFIG_HZ=300
+          CONFIG_SCHED_SMT=y
+          CONFIG_SCHED_MC=y
+          CONFIG_UCLAMP_TASK=y
+          CONFIG_ENERGY_MODEL=y
+          CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
+          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
+          CONFIG_PREEMPT=y
+          CONFIG_PREEMPT_VOLUNTARY=n
+          CONFIG_PREEMPT_NONE=n
+          
+          # 3. Timer Optimization (Power Saving & Real-time)
+          CONFIG_NO_HZ_FULL=y
+          CONFIG_NO_HZ=y
           CONFIG_HIGH_RES_TIMERS=y
+          CONFIG_RCU_NOCB_CPU=y
+          
+          # 4. Memory Management (Disable Compaction = Save CPU Cycles)
+          CONFIG_COMPACTION=n
+          CONFIG_MIGRATION=n
+          CONFIG_KSM=n
+          CONFIG_PAGE_POISONING=n
+          CONFIG_VM_EVENT_COUNTS=n
           CONFIG_CLEANCACHE=y
-          CONFIG_IP_NF_TARGET_TTL=y
-          CONFIG_IP6_NF_TARGET_HL=y
-          CONFIG_IP6_NF_MATCH_HL=y
+          CONFIG_FRONTSWAP=y
+          
+          # 5. Network (TCP Optimization & Lower Latency)
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
-          CONFIG_NET_SCH_FQ=y
-          CONFIG_TCP_CONG_BIC=n
-          CONFIG_TCP_CONG_WESTWOOD=n
-          CONFIG_TCP_CONG_HTCP=n
           CONFIG_DEFAULT_BBR=y
+          CONFIG_NET_SCH_FQ=y
+          CONFIG_TCP_TIMESTAMPS=n
+          CONFIG_TCP_NODELAY=y
+          CONFIG_IP_NF_TARGET_TTL=y
+          CONFIG_IP6_NF_TARGET_HL=y
+          
+          # 6. Filesystem
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_FILE_LOCKING=y
           EOF
+          echo "✅ Defconfig updated with all optimizations."
 
-      - name: Apply Cherry-Picks
+      - name: Apply Cherry-Picks and Check Status
         working-directory: gki/common
         run: |
-          echo "Applying requested cherry-picks..."
+          echo "--- Starting Cherry-Pick Patches ---"
           
           # Patch 1: Common 5.10 update/fix
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
-          }
+          if curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3; then
+             echo "✅ Patch 1 (4fe04b60009e) applied via git am."
+          else
+             echo "⚠️ Patch 1 (4fe04b60009e) git am failed, falling back to patch..."
+             if curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1; then
+                echo "✅ Patch 1 applied successfully via 'patch' fallback."
+             else
+                echo "❌ FAILED: Patch 1 application failed completely! Exiting..."
+                exit 1
+             fi
+          fi
 
           # Patch 2: Xiaomi Marble specific fix
-          curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1
-          }
+          if curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3; then
+             echo "✅ Patch 2 (477706c2bcaaf48350c61f9f6824e1e454617147) applied via git am."
+          else
+             echo "⚠️ Patch 2 (477706c2bcaaf48350c61f9f6824e1e454617147) git am failed, falling back to patch..."
+             if curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1; then
+                echo "✅ Patch 2 applied successfully via 'patch' fallback."
+             else
+                echo "❌ FAILED: Patch 2 application failed completely! Exiting..."
+                exit 1
+             fi
+          fi
 
       - name: Final Build Config & Version Fix
         working-directory: gki
@@ -215,6 +274,7 @@ jobs:
       - name: Build Kernel
         working-directory: gki
         run: |
+          echo "--- Starting Kernel Build ---"
           export CC="ccache clang"
           export USE_CCACHE=1
           export CCACHE_DIR="/tmp/ccache"
@@ -222,9 +282,11 @@ jobs:
           
           echo "Starting build with LTO=thin..."
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh -j$(nproc)
+          echo "✅ Build command executed. Check logs above for final compilation status."
 
       - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
           name: Image${{ github.event.inputs.kernel_name }}
           path: gki/out/**/dist/Image
+          
