@@ -1,10 +1,10 @@
-Name: KowSU 3
+name: KowSU 3
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel (Opsional, Max 15 char agar tidak error)'
+        description: 'Nama Kernel (Optional)'
         required: false
         default: ''
       clang_version:
@@ -102,7 +102,6 @@ jobs:
           
           # --- TWEAK: Set Default Swappiness to 100 ---
           echo "Patching vm_swappiness to 100..."
-          # Mencari inisialisasi default swappiness dan mengubahnya dari 60 ke 100
           sed -i 's/int vm_swappiness = 60;/int vm_swappiness = 100;/g' mm/vmscan.c
 
       - name: Configure Defconfig
@@ -116,12 +115,11 @@ jobs:
           CONFIG_KPM=n
           CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_KPROBES_HOOK=n
-          
+
           # ZRAM & SWAP Configuration (Required for ZRAM 4GB setup via Userspace)
           CONFIG_SWAP=y
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
-          # Optional: LZ4 is usually faster for ZRAM
           CONFIG_ZRAM_DEF_COMP_LZ4=y 
           
           # SUSFS Configuration
