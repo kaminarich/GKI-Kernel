@@ -1,10 +1,10 @@
-Name: KowSU 3
+name: KowSU 3
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel (Opsional)'
+        description: 'Nama Kernel (Opsional, Max 15 char agar tidak error)'
         required: false
         default: ''
       clang_version:
@@ -90,30 +90,55 @@ jobs:
           echo "Updating KernelSU submodule..."
           git submodule update --init --recursive drivers/staging/kernelsu
 
-          echo "✅ KernelSU submodule updated"
+          echo "KernelSU submodule updated"
 
-      - name: Apply Patches
+      - name: Apply Patches & Optimization Tweaks
         working-directory: gki/common
         run: |
-          echo "--- Starting Kernel Source Patching ---"
+          # --- FUNCTION CHECK STATUS ---
+          check_status() {
+              if [ $? -eq 0 ]; then
+                  echo "✅ [SUCCESS] $1"
+              else
+                  echo "❌ [FAILED] $1"
+                  exit 1
+              fi
+          }
+
+          echo "================================================="
+          echo "       APPLYING PATCHES & OPTIMIZATIONS"
+          echo "================================================="
+
+          # --- XIAOMI COMPATIBILITY ---
+          echo "-> Applying Xiaomi Compatibility Patches..."
           
-          # Xiaomi Compatibility Patches
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+          check_status "Xiaomi Module Version Check Bypass"
+
+          # Hapus fungsi drm_atomic_check_valid_clones jika ada
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
-          echo "✅ Patch: Xiaomi compatibility applied."
+          check_status "Xiaomi DRM Atomic Check Fix"
           
-          # --- PERFORMANCE SOURCE TWEAKS (ROBUST REGEX METHOD) ---
+          # --- PERFORMANCE SOURCE TWEAKS ---
+          echo "-> Applying Source Code Performance Tweaks..."
           
-          # 1. Set Default Swappiness to 100 (Aggressive Swap)
-          # Menggunakan regex [0-9]* agar angka berapapun yg ada diganti jadi 100
-          sed -i 's/int vm_swappiness = [0-9]*;/int vm_swappiness = 100;/g' mm/vmscan.c
-          echo "✅ Tweak: vm_swappiness patched to 100 (using regex)."
+          # 1. Set vm_swappiness to 100
+          # PENJELASAN REGEX:
+          # \s* = spasi boleh ada boleh tidak
+          # [0-9]* = angka berapapun (misal 60, 10, 0)
+          # Ini akan mengganti 'int vm_swappiness = (angka berapapun);' menjadi 100
+          sed -i 's/int vm_swappiness\s*=\s*[0-9]*;/int vm_swappiness = 100;/g' mm/vmscan.c
+          check_status "Set vm_swappiness to 100"
 
-          # 2. Retain VFS Cache Longer (vfs_cache_pressure = 50)
-          # Menggunakan regex [0-9]* agar angka berapapun yg ada diganti jadi 50
-          sed -i 's/int sysctl_vfs_cache_pressure = [0-9]*;/int sysctl_vfs_cache_pressure = 50;/g' fs/dcache.c 2>/dev/null || true
-          echo "✅ Tweak: vfs_cache_pressure patched to 50 (using regex)."
+          # 2. Retain VFS Cache Longer (Lower Pressure)
+          # Mengganti 'int sysctl_vfs_cache_pressure = (angka berapapun);' menjadi 50
+          sed -i 's/int sysctl_vfs_cache_pressure\s*=\s*[0-9]*;/int sysctl_vfs_cache_pressure = 50;/g' fs/dcache.c
+          check_status "Set vfs_cache_pressure to 50"
+
+          echo "================================================="
+          echo "        ALL PATCHES APPLIED SUCCESSFULLY"
+          echo "================================================="
 
       - name: Configure Defconfig (Optimized)
         working-directory: gki/common
@@ -121,16 +146,18 @@ jobs:
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
           
           cat <<EOF >> "$DEFCONFIG"
-          # --- KernelSU & General Setup ---
+          # --- KernelSU Configuration ---
           CONFIG_KSU=y
           CONFIG_KPM=n
           CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_KPROBES_HOOK=n
+
+          # --- ZRAM & SWAP (For 4GB ZRAM Setup) ---
           CONFIG_SWAP=y
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
           CONFIG_ZRAM_DEF_COMP_LZ4=y 
-
+          
           # --- SUSFS Configuration ---
           CONFIG_KSU_SUSFS=y
           CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y
@@ -205,38 +232,23 @@ jobs:
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_FILE_LOCKING=y
           EOF
-          echo "✅ Defconfig updated with all optimizations."
 
-      - name: Apply Cherry-Picks and Check Status
+      - name: Apply Cherry-Picks
         working-directory: gki/common
         run: |
-          echo "--- Starting Cherry-Pick Patches ---"
+          echo "Applying requested cherry-picks..."
           
           # Patch 1: Common 5.10 update/fix
-          if curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3; then
-             echo "✅ Patch 1 (4fe04b60009e) applied via git am."
-          else
-             echo "⚠️ Patch 1 (4fe04b60009e) git am failed, falling back to patch..."
-             if curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1; then
-                echo "✅ Patch 1 applied successfully via 'patch' fallback."
-             else
-                echo "❌ FAILED: Patch 1 application failed completely! Exiting..."
-                exit 1
-             fi
-          fi
+          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
+             echo "git am failed, falling back to patch..."
+             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
+          }
 
           # Patch 2: Xiaomi Marble specific fix
-          if curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3; then
-             echo "✅ Patch 2 (477706c2bcaaf48350c61f9f6824e1e454617147) applied via git am."
-          else
-             echo "⚠️ Patch 2 (477706c2bcaaf48350c61f9f6824e1e454617147) git am failed, falling back to patch..."
-             if curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1; then
-                echo "✅ Patch 2 applied successfully via 'patch' fallback."
-             else
-                echo "❌ FAILED: Patch 2 application failed completely! Exiting..."
-                exit 1
-             fi
-          fi
+          curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3 || {
+             echo "git am failed, falling back to patch..."
+             curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1
+          }
 
       - name: Final Build Config & Version Fix
         working-directory: gki
@@ -274,7 +286,6 @@ jobs:
       - name: Build Kernel
         working-directory: gki
         run: |
-          echo "--- Starting Kernel Build ---"
           export CC="ccache clang"
           export USE_CCACHE=1
           export CCACHE_DIR="/tmp/ccache"
@@ -282,11 +293,9 @@ jobs:
           
           echo "Starting build with LTO=thin..."
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh -j$(nproc)
-          echo "✅ Build command executed. Check logs above for final compilation status."
 
       - name: Upload Image
         uses: actions/upload-artifact@v4
         with:
           name: Image${{ github.event.inputs.kernel_name }}
           path: gki/out/**/dist/Image
-          
