@@ -128,8 +128,8 @@ jobs:
           # \s* = spasi boleh ada boleh tidak
           # [0-9]* = angka berapapun (misal 60, 10, 0)
           # Ini akan mengganti 'int vm_swappiness = (angka berapapun);' menjadi 100
-          sed -i 's/int vm_swappiness\s*=\s*[0-9]*;/int vm_swappiness = 100;/g' mm/vmscan.c
-          check_status "Set vm_swappiness to 100"
+          sed -i 's/int vm_swappiness\s*=\s*[0-9]*;/int vm_swappiness = 20;/g' mm/vmscan.c
+          check_status "Set vm_swappiness to 20"
 
           # 2. Retain VFS Cache Longer (Lower Pressure)
           # Mengganti 'int sysctl_vfs_cache_pressure = (angka berapapun);' menjadi 50
