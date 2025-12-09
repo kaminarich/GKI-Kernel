@@ -1,4 +1,4 @@
-name: KowSU 3
+name: KowSU 2
 
 on:
   workflow_dispatch:
@@ -126,11 +126,13 @@ jobs:
           # 1. Set vm_swappiness to 100
           # PENJELASAN REGEX:
           # \s* = spasi boleh ada boleh tidak
-          # [0-9]* = angka berapapun
+          # [0-9]* = angka berapapun (misal 60, 10, 0)
+          # Ini akan mengganti 'int vm_swappiness = (angka berapapun);' menjadi 100
           sed -i 's/int vm_swappiness\s*=\s*[0-9]*;/int vm_swappiness = 100;/g' mm/vmscan.c
           check_status "Set vm_swappiness to 100"
 
           # 2. Retain VFS Cache Longer (Lower Pressure)
+          # Mengganti 'int sysctl_vfs_cache_pressure = (angka berapapun);' menjadi 50
           sed -i 's/int sysctl_vfs_cache_pressure\s*=\s*[0-9]*;/int sysctl_vfs_cache_pressure = 50;/g' fs/dcache.c
           check_status "Set vfs_cache_pressure to 50"
 
@@ -184,7 +186,7 @@ jobs:
           CONFIG_DEBUG_INFO=n
           CONFIG_DEBUG_FS=n
           CONFIG_DEBUG_KERNEL=n
-          CONFIG_SLUB_DEBUG=n
+          # CONFIG_SLUB_DEBUG=n
           CONFIG_FRAME_POINTER=n
 
           # 2. CPU Scheduling & Latency (UI Responsiveness & Gaming)
@@ -248,47 +250,23 @@ jobs:
              curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1
           }
 
-      - name: Final Build Config & Version Fix (DISABLE ABI)
+      - name: Final Build Config & Version Fix
         working-directory: gki
         run: |
-          # --- FUNCTION CHECK STATUS ---
-          check_status() {
-              if [ $? -eq 0 ]; then
-                  echo "✅ [SUCCESS] $1"
-              else
-                  echo "❌ [FAILED] $1"
-                  exit 1
-              fi
-          }
-
-          echo "================================================="
-          echo "       FINALIZING CONFIG & DISABLING ABI"
-          echo "================================================="
-
           # 1. FIX: Hapus semua file localversion dari upstream agar tidak bentrok
           rm -f common/localversion*
           
           # 2. Update build config untuk Clang version
           sed -i "s/clang-r[0-9]*[a-z]*/${CLANG_VER}/g" common/build.config.gki.aarch64
           sed -i "s/clang-r[0-9]*[a-z]*/${CLANG_VER}/g" common/build.config.common 2>/dev/null || true
-          check_status "Update Clang Version in Build Config"
           
-          # 3. Disable check_defconfig & ABI/KMI CHECKS (CRITICAL FIX)
-          echo "-> Disabling ABI/KMI Enforcement..."
-          
-          sed -i 's/check_defconfig//g' ./common/build.config.gki
-          
-          # Gunakan Regex untuk mengosongkan definisi ABI di semua config umum
-          sed -i 's/^ABI_DEFINITION=.*//g' common/build.config.common
-          sed -i 's/^KMI_SYMBOL_LIST=.*//g' common/build.config.common
-          sed -i 's/^ABI_DEFINITION=.*//g' common/build.config.gki.aarch64
-          
-          check_status "Disable ABI/KMI Checks"
+          # 3. Disable check_defconfig
+          sed -i 's/check_defconfig//' ./common/build.config.gki
           
           # 4. Handle Kernel Name / Branding
           DEFCONFIG2="./common/arch/arm64/configs/gki_defconfig"
           
-          # Hapus settingan lama dengan regex
+          # Hapus settingan lama
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG2"
           
           if [ ! -z "${{ github.event.inputs.kernel_name }}" ]; then
@@ -304,7 +282,6 @@ jobs:
           
           echo "CONFIG_LOCALVERSION=\"$BRAND\"" >> "$DEFCONFIG2"
           echo "CONFIG_LOCALVERSION_AUTO=n" >> "$DEFCONFIG2"
-          check_status "Set Kernel Branding"
 
       - name: Build Kernel
         working-directory: gki
