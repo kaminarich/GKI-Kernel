@@ -1,10 +1,10 @@
-name: KowSU 3
+Name: KowSU 3 Fixed
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel (Opsional, Max 15 char agar tidak error)'
+        description: 'Nama Kernel (Opsional, Max 15 char)'
         required: false
         default: ''
       clang_version:
@@ -72,37 +72,25 @@ jobs:
           cd prebuilts-master/clang/host/linux-x86
           curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
           
-          # Fix Symlink for build script compatibility
+          # Fix Symlink
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
       - name: Setup Upstream & KernelSU-KowSU (SUBMODULE METHOD)
         working-directory: gki/common
         run: |
-          # Setup Remote Upstream (Rama Bondan)
           git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
           git fetch -j12 rama
-          
-          # Checkout branch staging
           git checkout -b update-5.10.247 rama/android12-5.10-staging
-
-          # INIT & UPDATE SUBMODULE
+          
           echo "Updating KernelSU submodule..."
           git submodule update --init --recursive drivers/staging/kernelsu
-
-          echo "KernelSU submodule updated"
 
       - name: Apply Patches & Optimization Tweaks
         working-directory: gki/common
         run: |
-          # --- FUNCTION CHECK STATUS ---
           check_status() {
-              if [ $? -eq 0 ]; then
-                  echo "✅ [SUCCESS] $1"
-              else
-                  echo "❌ [FAILED] $1"
-                  exit 1
-              fi
+              if [ $? -eq 0 ]; then echo "✅ [SUCCESS] $1"; else echo "❌ [FAILED] $1"; exit 1; fi
           }
 
           echo "================================================="
@@ -115,32 +103,15 @@ jobs:
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
           check_status "Xiaomi Module Version Check Bypass"
 
-          # Hapus fungsi drm_atomic_check_valid_clones jika ada
+          # Hapus fungsi drm_atomic_check_valid_clones
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
           check_status "Xiaomi DRM Atomic Check Fix"
           
-          # --- PERFORMANCE SOURCE TWEAKS ---
-          echo "-> Applying Source Code Performance Tweaks..."
-          
-          # 1. Set vm_swappiness to 100
-          # PENJELASAN REGEX:
-          # \s* = spasi boleh ada boleh tidak
-          # [0-9]* = angka berapapun (misal 60, 10, 0)
-          # Ini akan mengganti 'int vm_swappiness = (angka berapapun);' menjadi 100
-          sed -i 's/int vm_swappiness\s*=\s*[0-9]*;/int vm_swappiness = 100;/g' mm/vmscan.c
-          check_status "Set vm_swappiness to 100"
+          # --- REMOVED: DANGEROUS SOURCE TWEAKS (vmscan/dcache) ---
+          echo "⚠️ Skipped direct source editing for vm_swappiness to prevent bootloop."
 
-          # 2. Retain VFS Cache Longer (Lower Pressure)
-          # Mengganti 'int sysctl_vfs_cache_pressure = (angka berapapun);' menjadi 50
-          sed -i 's/int sysctl_vfs_cache_pressure\s*=\s*[0-9]*;/int sysctl_vfs_cache_pressure = 50;/g' fs/dcache.c
-          check_status "Set vfs_cache_pressure to 50"
-
-          echo "================================================="
-          echo "        ALL PATCHES APPLIED SUCCESSFULLY"
-          echo "================================================="
-
-      - name: Configure Defconfig (Optimized)
+      - name: Configure Defconfig (Optimized & Fixed)
         working-directory: gki/common
         run: |
           DEFCONFIG="arch/arm64/configs/gki_defconfig"
@@ -152,7 +123,7 @@ jobs:
           CONFIG_KSU_MANUAL_HOOK=y
           CONFIG_KSU_KPROBES_HOOK=n
 
-          # --- ZRAM & SWAP (For 4GB ZRAM Setup) ---
+          # --- ZRAM & SWAP ---
           CONFIG_SWAP=y
           CONFIG_ZRAM=y
           CONFIG_ZRAM_WRITEBACK=y
@@ -178,18 +149,15 @@ jobs:
           CONFIG_KSU_SUSFS_SUS_KSTAT_SPOOF_GENERIC=y
           CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSTAT=y
 
-          # --- PERFORMANCE & EFFICIENCY OPTIMIZATIONS ---
-          
-          # 1. Reduce Overhead (Disable Debugging & Logging)
+          # --- PERFORMANCE & EFFICIENCY ---
           CONFIG_PRINTK_TIME=n
           CONFIG_DYNAMIC_DEBUG=n
           CONFIG_DEBUG_INFO=n
           CONFIG_DEBUG_FS=n
           CONFIG_DEBUG_KERNEL=n
-          # CONFIG_SLUB_DEBUG=n
           CONFIG_FRAME_POINTER=n
 
-          # 2. CPU Scheduling & Latency (UI Responsiveness & Gaming)
+          # CPU Scheduling
           CONFIG_HZ_1000=y
           CONFIG_HZ=1000
           CONFIG_SCHED_SMT=y
@@ -197,37 +165,33 @@ jobs:
           CONFIG_UCLAMP_TASK=y
           CONFIG_ENERGY_MODEL=y
           CONFIG_CPU_FREQ_GOV_SCHEDUTIL=y
-          CONFIG_CPU_FREQ_DEFAULT_GOV_SCHEDUTIL=y
           CONFIG_PREEMPT=y
-          CONFIG_PREEMPT_VOLUNTARY=n
-          CONFIG_PREEMPT_NONE=n
           
-          # 3. Timer Optimization (Power Saving & Real-time)
+          # Timer
           CONFIG_NO_HZ_FULL=y
           CONFIG_NO_HZ=y
           CONFIG_HIGH_RES_TIMERS=y
           CONFIG_RCU_NOCB_CPU=y
           
-          # 4. Memory Management (Disable Compaction = Save CPU Cycles)
-          CONFIG_COMPACTION=n
-          CONFIG_MIGRATION=n
+          # --- MEMORY MANAGEMENT (FIXED FOR BOOT STABILITY) ---
+          # PENTING: Jangan matikan Compaction/Migration di Android!
+          CONFIG_COMPACTION=y
+          CONFIG_MIGRATION=y
           CONFIG_KSM=n
           CONFIG_PAGE_POISONING=n
           CONFIG_VM_EVENT_COUNTS=n
           CONFIG_CLEANCACHE=y
           CONFIG_FRONTSWAP=y
           
-          # 5. Network (TCP Optimization & Lower Latency)
+          # Network
           CONFIG_TCP_CONG_ADVANCED=y
           CONFIG_TCP_CONG_BBR=y
           CONFIG_DEFAULT_BBR=y
           CONFIG_NET_SCH_FQ=y
-          CONFIG_TCP_TIMESTAMPS=n
           CONFIG_TCP_NODELAY=y
           CONFIG_IP_NF_TARGET_TTL=y
-          CONFIG_IP6_NF_TARGET_HL=y
           
-          # 6. Filesystem
+          # Filesystem
           CONFIG_TMPFS_XATTR=y
           CONFIG_TMPFS_POSIX_ACL=y
           CONFIG_FILE_LOCKING=y
@@ -240,43 +204,36 @@ jobs:
           
           # Patch 1: Common 5.10 update/fix
           curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
+             echo "Using fallback patch..."
              curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
           }
 
           # Patch 2: Xiaomi Marble specific fix
           curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
+             echo "Using fallback patch..."
              curl -L "https://github.com/Pzqqt/android_kernel_xiaomi_marble/commit/477706c2bcaaf48350c61f9f6824e1e454617147.patch" | patch -p1
           }
 
       - name: Final Build Config & Version Fix
         working-directory: gki
         run: |
-          # 1. FIX: Hapus semua file localversion dari upstream agar tidak bentrok
           rm -f common/localversion*
           
-          # 2. Update build config untuk Clang version
           sed -i "s/clang-r[0-9]*[a-z]*/${CLANG_VER}/g" common/build.config.gki.aarch64
           sed -i "s/clang-r[0-9]*[a-z]*/${CLANG_VER}/g" common/build.config.common 2>/dev/null || true
           
-          # 3. Disable check_defconfig
+          # Disable check_defconfig
           sed -i 's/check_defconfig//' ./common/build.config.gki
           
-          # 4. Handle Kernel Name / Branding
           DEFCONFIG2="./common/arch/arm64/configs/gki_defconfig"
-          
-          # Hapus settingan lama
           sed -i '/^CONFIG_LOCALVERSION=/d' "$DEFCONFIG2"
           
           if [ ! -z "${{ github.event.inputs.kernel_name }}" ]; then
-            echo "Using custom kernel name: ${{ github.event.inputs.kernel_name }}"
             BRAND="-${{ github.event.inputs.kernel_name }}"
           else
             BRAND=""
           fi
           
-          # FIX: Paksa script setlocalversion untuk HANYA output brand kita
           echo "echo \"$BRAND\"" > common/scripts/setlocalversion
           chmod +x common/scripts/setlocalversion
           
