@@ -1,4 +1,4 @@
-Name: Susu 2
+name: Susu 2
 
 on:
   workflow_dispatch:
