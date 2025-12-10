@@ -148,6 +148,7 @@ jobs:
           # --- KSU & KPM Configs ---
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KPM=y" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
 
           # --- Custom Network & FS ---
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
