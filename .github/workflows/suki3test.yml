@@ -1,4 +1,4 @@
-name: Susu 3 Test
+name: Susu 2
 
 on:
   workflow_dispatch:
@@ -77,15 +77,23 @@ jobs:
       - name: Setup SukiSU & SUSFS
         run: |
           cd gki/common
+          # Setup KernelSU (Main only)
           curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s main
-          curl -LSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" | bash -s susfs-main
-          git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
-          rm -rf sus/.git
-          susfs=sus/kernel_patches
-          cp -r $susfs/fs .
-          cp -r $susfs/include .
-          cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
-          patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          
+          # Setup SUSFS (Manual method per instruction)
+          echo "☁️ Cloning SUSFS..."
+          git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu -b gki-android12-5.10 .susfs
+          
+          echo "📂 Copying SUSFS files..."
+          kernel_patches="$(pwd)/.susfs/kernel_patches"
+          cp -R $kernel_patches/fs/* ./fs
+          cp -R $kernel_patches/include/* ./include
+          
+          echo "🔧 Applying SUSFS Patch..."
+          # Menggunakan wildcard patch sesuai gambar
+          # Note: Jika ada banyak patch, pastikan shell expandnya benar. 
+          # Biasanya susfs hanya punya 1 file patch di folder ini.
+          patch -p1 < $kernel_patches/*.patch
 
       - name: Apply common fixes
         working-directory: gki/common
@@ -133,11 +141,13 @@ jobs:
         run: |
           cd gki/common
           rm -rf KernelSU/.git
-          rm -rf sus/.git
+          # Hapus folder .susfs (sebelumnya sus)
+          rm -rf .susfs/.git
           git rm --cached --ignore-unmatch -r KernelSU
-          git rm --cached --ignore-unmatch -r sus
+          # Note: .susfs adalah hidden folder, mungkin tidak ter-track git secara default, 
+          # tapi kita clean up just in case.
+          rm -rf .susfs
           git add KernelSU
-          git add sus
           git commit -m "Inject KernelSU & SUSFS manually" || true
 
       - name: Inject KSU & Network configs
