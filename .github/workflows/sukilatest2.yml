@@ -101,7 +101,7 @@ jobs:
       - name: Apply Manual Stack Protector Fix
         working-directory: gki/common
         run: |
-          echo "🛠️ Applying manual Stack Protector fix based on screenshots..."
+          echo "🛠️ Applying manual Stack Protector fix "
 
           # 1. Edit arch/arm64/Kconfig
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
