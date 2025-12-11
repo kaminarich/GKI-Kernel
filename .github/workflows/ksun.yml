@@ -77,27 +77,27 @@ jobs:
       - name: Setup KSUN & SUSFS
         run: |
           cd gki/common
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
+          
+          # 1. Add KernelSU-Next as a real Submodule
+          echo "🔹 Adding KernelSU-Next submodule..."
+          git submodule add --force -b next https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
+          git submodule update --init --recursive
+          
+          # 2. Run setup script (pass the folder name to avoid re-cloning)
+          echo "🔹 Running KSU setup script..."
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s KernelSU-Next
+          
+          # 3. Setup SUSFS
+          echo "🔹 Setting up SUSFS..."
           git clone https://gitlab.com/simonpunk/susfs4ksu/ -b gki-android12-5.10 sus
+          
+          # SUSFS Patching logic
           rm -rf sus/.git
           susfs=sus/kernel_patches
           cp -r $susfs/fs .
           cp -r $susfs/include .
           cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
           patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
-          
-          # 5. Setup Submodule
-          if [ -d "KernelSU-Next" ]; then
-            KSU_DIR="KernelSU-Next"
-          else
-            echo "Error: KernelSU folder not found!"
-            exit 1
-          fi
-          
-          rm -rf sus/.git
-          git add $KSU_DIR
-          git add sus
-          git commit -m "Inject KernelSU-Next and SUSFS" || true
 
       - name: Apply common fixes
         working-directory: gki/common
@@ -107,7 +107,7 @@ jobs:
           PATCH_URL="https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch"
           PATCH_FILE="common_fix.patch"
 
-          # 1. Download to a file (Safer than piping)
+          # 1. Download to a file
           curl -L "${PATCH_URL}" -o "${PATCH_FILE}"
 
           # 2. Check if file is valid
@@ -124,38 +124,28 @@ jobs:
             echo "⚠️ git am failed. Aborting and falling back to force patch..."
             git am --abort
             
-            # 4. Fallback to patch -p1 (Ignore conflicts/fuzz)
+            # 4. Fallback to patch -p1
             patch -p1 --fuzz=3 < "${PATCH_FILE}" || true
             
             echo "✅ Applied via patch -p1 (Conflicts/Duplicates ignored)."
           fi
-          
-          # Clean up
           rm "${PATCH_FILE}"
 
       - name: Fix Stack Protector
         working-directory: gki/common
         run: |
           echo "🛠️ Applying manual Stack Protector fix "
-
-          # 1. Edit arch/arm64/Kconfig
           sed -i '/config STACKPROTECTOR_PER_TASK/{n;s/def_bool y/bool "Stack Protector per task"\n\tdefault y/;}' arch/arm64/Kconfig
-
-          # 2. Disable di gki_defconfig
           echo "# CONFIG_STACKPROTECTOR_PER_TASK is not set" >> arch/arm64/configs/gki_defconfig
-          
           echo "✅ Stack Protector fix applied manually."
 
       - name: Patch module & DRM
         run: |
           cd gki
-          echo "patching module.c (change version mismatch to return 1)"
+          echo "patching module.c..."
           sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' common/kernel/module.c
-          
-          echo "removing drm_atomic_check valid_clones"
+          echo "removing drm_atomic_check valid_clones..."
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' common/drivers/gpu/drm/drm_atomic_helper.c
-          
-          echo "Removing drm_atomic_check_valid_clones call..."
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' common/drivers/gpu/drm/drm_atomic_helper.c
 
       - name: Remove check_defconfig
@@ -167,25 +157,28 @@ jobs:
       - name: Fix git index
         run: |
           cd gki/common
-          rm -rf KernelSU-Next/.git
+          
+          # HANYA hapus .git untuk susfs (karena bukan submodule)
           rm -rf sus/.git
-          git rm --cached --ignore-unmatch -r KernelSU-Next
           git rm --cached --ignore-unmatch -r sus
-          git add KernelSU-Next
+          
+          # JANGAN hapus .git untuk KernelSU-Next!
+          # Kita add keduanya
           git add sus
-          git commit -m "Inject KernelSU & SUSFS manually" || true
+          # Karena KernelSU-Next adalah submodule, git add otomatis meng-add reference-nya
+          git add KernelSU-Next
+          
+          git commit -m "Inject KernelSU & SUSFS" || true
 
       - name: Inject KSU & Network configs
         run: |
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           echo "Injecting custom configs to $DEFCONFIG"
           
-          # --- KSU & KPM Configs ---
           echo "CONFIG_KSU=y" >> $DEFCONFIG
           echo "CONFIG_KPM=n" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-
-          # --- Custom Network & FS ---
+          
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
@@ -215,7 +208,7 @@ jobs:
                echo "EXTRAVERSION = -$KERNEL_NAME" >> Makefile
              fi
           else
-             echo "Kernel name input is empty. Skipping custom name (Using Default)."
+             echo "Kernel name input is empty. Skipping custom name."
           fi
 
       - name: Set HZ=300
@@ -228,11 +221,9 @@ jobs:
           mkdir -p prebuilts-master/clang/host/linux-x86
           
           if [ "${{ github.event.inputs.clang_version }}" == "r536225 (Clang 19)" ]; then
-            echo "Setting up Clang-19 (r536225)..."
             CLANG_VER="clang-r536225"
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/main-kernel-2025/clang-r536225.tar.gz"
           else
-            echo "Setting up Clang-20 (r547379)..."
             CLANG_VER="clang-r547379"
             CLANG_URL="https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/62cdcefa89e31af2d72c366e8b5ef8db84caea62/clang-r547379.tar.gz"
           fi
