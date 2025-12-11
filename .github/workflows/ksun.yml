@@ -154,11 +154,11 @@ jobs:
       - name: Fix git index
         run: |
           cd gki/common
-          rm -rf KernelSU/.git
+          rm -rf KernelSU-Next/.git
           rm -rf sus/.git
-          git rm --cached --ignore-unmatch -r KernelSU
+          git rm --cached --ignore-unmatch -r KernelSU-Next
           git rm --cached --ignore-unmatch -r sus
-          git add KernelSU
+          git add KernelSU-Next
           git add sus
           git commit -m "Inject KernelSU & SUSFS manually" || true
 
@@ -169,7 +169,7 @@ jobs:
           
           # --- KSU & KPM Configs ---
           echo "CONFIG_KSU=y" >> $DEFCONFIG
-          echo "CONFIG_KPM=y" >> $DEFCONFIG
+          echo "CONFIG_KPM=n" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
 
           # --- Custom Network & FS ---
