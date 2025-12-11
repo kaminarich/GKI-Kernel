@@ -85,6 +85,19 @@ jobs:
           cp -r $susfs/include .
           cp -r $susfs/50_add_susfs_in_gki-android12-5.10.patch .
           patch -p1 < 50_add_susfs_in_gki-android12-5.10.patch
+          
+          # 5. Setup Submodule
+          if [ -d "KernelSU-Next" ]; then
+            KSU_DIR="KernelSU-Next"
+          else
+            echo "Error: KernelSU folder not found!"
+            exit 1
+          fi
+          
+          rm -rf sus/.git
+          git add $KSU_DIR
+          git add sus
+          git commit -m "Inject KernelSU-Next and SUSFS" || true
 
       - name: Apply common fixes
         working-directory: gki/common
@@ -243,25 +256,6 @@ jobs:
         run: |
           cd gki
           LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh
-
-      - name: Patch KPM
-        run: |
-          cd gki/out/android12-5.10/common/arch/arm64/boot/
-          if [ -f Image ]; then
-            echo "Image found, applying KPM patch..."
-            curl -LSs "https://github.com/SukiSU-Ultra/SukiSU_patch/raw/refs/heads/main/kpm/patch_linux" -o patch
-            chmod 777 patch
-            ./patch
-            if [ -f oImage ]; then
-              mv -f oImage Image
-              ls -lh Image
-            else
-              echo "Error: oImage not found!"
-              exit 1
-            fi
-          else
-            echo "Image file not found. Skipping KPM patch."
-          fi
 
       - name: Upload Artifact
         uses: actions/upload-artifact@v4
