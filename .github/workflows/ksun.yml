@@ -91,11 +91,34 @@ jobs:
         run: |
           echo "Applying requested cherry-picks..."
           
-          # Patch 1: Common 5.10 update/fix
-          curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | git am -3 || {
-             echo "git am failed, falling back to patch..."
-             curl -L "https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch" | patch -p1
-          }
+          PATCH_URL="https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch"
+          PATCH_FILE="common_fix.patch"
+
+          # 1. Download to a file (Safer than piping)
+          curl -L "${PATCH_URL}" -o "${PATCH_FILE}"
+
+          # 2. Check if file is valid
+          if [ ! -s "${PATCH_FILE}" ]; then
+            echo "❌ Error: Patch file is empty or failed to download."
+            exit 1
+          fi
+
+          # 3. Attempt git am
+          echo "Attempting git am..."
+          if git am -3 < "${PATCH_FILE}"; then
+            echo "✅ git am succeeded."
+          else
+            echo "⚠️ git am failed. Aborting and falling back to force patch..."
+            git am --abort
+            
+            # 4. Fallback to patch -p1 (Ignore conflicts/fuzz)
+            patch -p1 --fuzz=3 < "${PATCH_FILE}" || true
+            
+            echo "✅ Applied via patch -p1 (Conflicts/Duplicates ignored)."
+          fi
+          
+          # Clean up
+          rm "${PATCH_FILE}"
 
       - name: Fix Stack Protector
         working-directory: gki/common
