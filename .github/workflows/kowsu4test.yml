@@ -1,4 +1,4 @@
-name: KowSU 4 test
+name: KowSU 4 Fixed Repo
 
 on:
   workflow_dispatch:
@@ -44,25 +44,33 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global user.email "action@github.com"
 
-      - name: Initialize Repo & Sync
+      - name: Initialize Repo & Sync (Google Standard)
         run: |
           mkdir -p gki
           cd gki
+          # Menggunakan Repo Init standar Google untuk mengambil Tools & Prebuilts
+          repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
+          repo sync -c -j$(nproc --all) --no-tags --fail-fast
+
+      - name: Swap Kernel Source (Millennium/KowSU)
+        working-directory: gki
+        run: |
+          echo "⚠️ Deleting default Google source..."
+          rm -rf common
           
-          echo "Manual Cloning Mode..."
+          echo "⬇️ Cloning MillenniumOSS..."
+          git clone https://github.com/MillenniumOSS/android_kernel_common_android12-5.10.git common
           
-          # 1. Clone Kernel Source ke folder 'common'
-          git clone --depth=1 https://github.com/MillenniumOSS/android_kernel_common_android12-5.10.git common
+          cd common
+          echo "🔄 Setting up KowSU Upstream..."
+          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
+          git fetch -j12 rama
           
-          # 2. Clone Google Build Tools (Wajib untuk GKI)
-          git clone --depth=1 -b android12-5.10 https://android.googlesource.com/kernel/build build
+          # Checkout ke branch KowSU
+          git checkout -b update-5.10.247 rama/android12-5.10-staging
           
-          # 3. Clone Prebuilts Build-Tools (Wajib untuk dependencies)
-          mkdir -p prebuilts
-          git clone --depth=1 -b master https://android.googlesource.com/kernel/prebuilts/build-tools prebuilts/build-tools
-          
-          # repo init --depth=1 -u https://android.googlesource.com/kernel/manifest -b common-android12-5.10
-          # repo sync -c -j$(nproc --all) --no-tags --fail-fast
+          echo "📦 Updating KernelSU submodule..."
+          git submodule update --init --recursive drivers/staging/kernelsu
 
       - name: Setup Clang
         working-directory: gki
@@ -89,16 +97,6 @@ jobs:
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
-      - name: Setup Upstream & KernelSU-KowSU (SUBMODULE METHOD)
-        working-directory: gki/common
-        run: |
-          git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
-          git fetch -j12 rama
-          git checkout -b update-5.10.247 rama/android12-5.10-staging
-          
-          echo "Updating KernelSU submodule..."
-          git submodule update --init --recursive drivers/staging/kernelsu
-
       - name: Apply Patches & Optimization Tweaks
         working-directory: gki/common
         run: |
@@ -120,9 +118,6 @@ jobs:
           sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
           sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
           check_status "Xiaomi DRM Atomic Check Fix"
-          
-          # --- REMOVED: DANGEROUS SOURCE TWEAKS (vmscan/dcache) ---
-          echo "⚠️ Skipped direct source editing for vm_swappiness to prevent bootloop."
 
       - name: Configure Defconfig (Optimized & Fixed)
         working-directory: gki/common
@@ -186,8 +181,7 @@ jobs:
           CONFIG_HIGH_RES_TIMERS=y
           CONFIG_RCU_NOCB_CPU=y
           
-          # --- MEMORY MANAGEMENT (FIXED FOR BOOT STABILITY) ---
-          # PENTING: Jangan matikan Compaction/Migration di Android!
+          # --- MEMORY MANAGEMENT ---
           CONFIG_COMPACTION=y
           CONFIG_MIGRATION=y
           CONFIG_KSM=n
