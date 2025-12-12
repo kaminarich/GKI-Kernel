@@ -74,7 +74,7 @@ jobs:
         run: |
           cd gki/common
           
-          # Add KSU-Next as submodule (fixes version tag issues)
+          # Add KSU-Next as submodule
           echo "[+] Adding KernelSU-Next submodule"
           git submodule add --force -b next https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           git submodule update --init --recursive
@@ -98,7 +98,6 @@ jobs:
         working-directory: gki/common
         run: |
           echo "Applying manual cherry-picks..."
-          
           PATCH_URL="https://github.com/ramabondanp/android_kernel_common-5.10/commit/4fe04b60009e.patch"
           PATCH_FILE="common_fix.patch"
 
@@ -160,30 +159,15 @@ jobs:
           DEFCONFIG="gki/common/arch/arm64/configs/gki_defconfig"
           echo "Injecting configs..."
           
-          # --- KSU Next Configuration ---
+          # KSU/SUSFS Configs
           echo "CONFIG_KSU=y" >> $DEFCONFIG
-          echo "CONFIG_KPM=n" >> $DEFCONFIG   
+          echo "CONFIG_KPM=n" >> $DEFCONFIG
+          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
           echo "CONFIG_KSU_MANUAL_HOOK=y" >> $DEFCONFIG
           echo "CONFIG_KSU_KPROBES_HOOK=n" >> $DEFCONFIG
-          
-          # --- SUSFS Configuration ---
-          echo "CONFIG_KSU_SUSFS=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_HAS_MAGIC_MOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_PATH=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_MOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_KSU_DEFAULT_MOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_SUS_BIND_MOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SUS_KSTAT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_TRY_UMOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_AUTO_ADD_TRY_UMOUNT_FOR_BIND_MOUNT=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SPOOF_UNAME=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_ENABLE_LOG=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y" >> $DEFCONFIG
-          echo "CONFIG_KSU_SUSFS_OPEN_REDIRECT=y" >> $DEFCONFIG
           echo "CONFIG_KSU_SUSFS_SUS_SU=n" >> $DEFCONFIG
           
-          # --- Net/FS Tweaks ---
+          # Net/FS Tweaks
           echo "CONFIG_TMPFS_XATTR=y" >> $DEFCONFIG
           echo "CONFIG_TMPFS_POSIX_ACL=y" >> $DEFCONFIG
           echo "CONFIG_IP_NF_TARGET_TTL=y" >> $DEFCONFIG
@@ -239,6 +223,7 @@ jobs:
           cd prebuilts-master/clang/host/linux-x86
           curl -L "${CLANG_URL}" | tar -xz -C $CLANG_VER
           
+          # Symlink to default expected clang version
           rm -rf clang-r416183b
           ln -sf $CLANG_VER clang-r416183b
 
@@ -265,6 +250,7 @@ jobs:
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
+            # Note: It is safer to use GitHub Secrets for API keys
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
