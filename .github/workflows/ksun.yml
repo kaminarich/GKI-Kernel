@@ -79,8 +79,8 @@ jobs:
           git submodule add --force -b next https://github.com/KernelSU-Next/KernelSU-Next.git KernelSU-Next
           git submodule update --init --recursive
           
-          # Setup KSU
-          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s KernelSU-Next
+          # Setup KSU (Updated to use dev profile)
+          curl -LSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/next/kernel/setup.sh" | bash -s dev
           
           # Setup SUSFS
           echo "[+] Cloning SUSFS"
@@ -250,7 +250,6 @@ jobs:
         if: always() 
         run: |
           if [ -f gki/out/android12-5.10/common/arch/arm64/boot/Image ]; then
-            # Note: It is safer to use GitHub Secrets for API keys
             curl -u :23c84c82-ce06-4e35-bc1f-69eaa13b9958 \
               -F file=@gki/out/android12-5.10/common/arch/arm64/boot/Image \
               https://pixeldrain.com/api/file
