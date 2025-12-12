@@ -1,4 +1,4 @@
-Name: KowSU 4 test
+name: KowSU 4 test
 
 on:
   workflow_dispatch:
