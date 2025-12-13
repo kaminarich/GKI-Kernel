@@ -1,15 +1,13 @@
-name: Script Build KSUN Kernel
+name: 1 Build KSUN (Env Style)
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Kernel Name'
         required: true
         default: 'Aetherium3.3-Eclipse-KSN'
         type: string
       clang_version:
-        description: 'Clang Version'
         required: true
         type: choice
         options:
@@ -19,7 +17,6 @@ on:
 
 jobs:
   build:
-    name: Build Kernel
     runs-on: ubuntu-22.04
 
     steps:
@@ -35,34 +32,45 @@ jobs:
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
-          remove-docker-images: 'true'
 
-      - name: Locate and Execute Script
+      - name: Prepare Script Location
         run: |
-          echo "=== Locating ksun.sh script ==="
+          # 1. Tentukan nama file (mirip TARGET_CONFIG_FILENAME)
+          SCRIPT_NAME="ksun.sh"
           
-          # Find ksun.sh in the current directory tree
-          SCRIPT_FILE=$(find . -type f -name "ksun.sh" | head -n 1)
-
-          if [ -z "$SCRIPT_FILE" ]; then
-            echo "Error: ksun.sh not found in the repository."
-            echo "Please ensure the file exists in the selected branch."
-            exit 1
+          # 2. Tentukan lokasi folder (Sesuai screenshot lu: .github/workflows/)
+          # Kita pakai $GITHUB_WORKSPACE biar path-nya absolut/pasti
+          SCRIPT_DIR="$GITHUB_WORKSPACE/.github/workflows"
+          
+          # 3. Gabungin jadi satu path lengkap
+          FULL_PATH="$SCRIPT_DIR/$SCRIPT_NAME"
+          
+          # 4. Cek file ada atau nggak (Safety check)
+          if [ -f "$FULL_PATH" ]; then
+              echo "✅ Script ditemukan di: $FULL_PATH"
+              # Masukin ke GITHUB_ENV biar bisa dipanggil step berikutnya
+              echo "KSUN_SCRIPT=$FULL_PATH" >> $GITHUB_ENV
           else
-            echo "Script found at: $SCRIPT_FILE"
+              echo "❌ Error: Script gak ketemu di $FULL_PATH"
+              echo "Pastikan lu run di branch yang bener (update-sukisu)!"
+              ls -R .github # Debugging bantu liat isi folder
+              exit 1
           fi
 
-          # Grant execution permissions
-          chmod +x "$SCRIPT_FILE"
-
-          # Inject configuration variables
-          echo "Configuring script variables..."
-          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' "$SCRIPT_FILE"
-          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' "$SCRIPT_FILE"
-
-          # Execute the script
-          echo "Starting execution..."
-          ./"$SCRIPT_FILE"
+      - name: Execute Script
+        run: |
+          # Panggil path dari environment variable yang kita buat di atas
+          echo "Menjalankan script: ${{ env.KSUN_SCRIPT }}"
+          
+          # Kasih izin eksekusi
+          chmod +x ${{ env.KSUN_SCRIPT }}
+          
+          # Inject variabel input ke dalam script
+          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' ${{ env.KSUN_SCRIPT }}
+          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' ${{ env.KSUN_SCRIPT }}
+          
+          # Jalankan
+          ${{ env.KSUN_SCRIPT }}
 
       - name: Upload Artifact
         if: success()
