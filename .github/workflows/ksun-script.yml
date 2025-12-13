@@ -1,15 +1,15 @@
-name: Build KSUN Script Fix
+name: Script Build KSUN Kernel
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
-        description: 'Nama Kernel'
+        description: 'Kernel Name'
         required: true
         default: 'Aetherium3.3-Eclipse-KSN'
         type: string
       clang_version:
-        description: 'Versi Clang'
+        description: 'Clang Version'
         required: true
         type: choice
         options:
@@ -19,14 +19,14 @@ on:
 
 jobs:
   build:
-    name: Build ${{ inputs.kernel_name }}
+    name: Build Kernel
     runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Free Disk Space
+      - name: Maximize Build Space
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
@@ -37,23 +37,32 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: Execute Script
+      - name: Locate and Execute Script
         run: |
-          # 1. Tentukan lokasi file (sesuai screenshot kamu)
-          SCRIPT_PATH=".github/workflows/ksun.sh"
+          echo "=== Locating ksun.sh script ==="
           
-          echo "=== Debug: Cek apakah file ada ==="
-          ls -l "$SCRIPT_PATH" || echo "File gak ketemu di $SCRIPT_PATH"
-          
-          # 2. Beri izin eksekusi
-          chmod +x "$SCRIPT_PATH"
-          
-          # 3. Inject settingan dari GitHub Actions ke dalam Script
-          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' "$SCRIPT_PATH"
-          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' "$SCRIPT_PATH"
-          
-          # 4. Jalankan Scriptnya
-          ./"$SCRIPT_PATH"
+          # Find ksun.sh in the current directory tree
+          SCRIPT_FILE=$(find . -type f -name "ksun.sh" | head -n 1)
+
+          if [ -z "$SCRIPT_FILE" ]; then
+            echo "Error: ksun.sh not found in the repository."
+            echo "Please ensure the file exists in the selected branch."
+            exit 1
+          else
+            echo "Script found at: $SCRIPT_FILE"
+          fi
+
+          # Grant execution permissions
+          chmod +x "$SCRIPT_FILE"
+
+          # Inject configuration variables
+          echo "Configuring script variables..."
+          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' "$SCRIPT_FILE"
+          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' "$SCRIPT_FILE"
+
+          # Execute the script
+          echo "Starting execution..."
+          ./"$SCRIPT_FILE"
 
       - name: Upload Artifact
         if: success()
