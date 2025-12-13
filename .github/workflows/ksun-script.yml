@@ -1,4 +1,4 @@
-name: Build KSUN via Script
+name: Build KSUN Script Fix
 
 on:
   workflow_dispatch:
@@ -19,14 +19,14 @@ on:
 
 jobs:
   build:
-    name: Build ${{ inputs.kernel_name }} (Clang ${{ inputs.clang_version }})
+    name: Build ${{ inputs.kernel_name }}
     runs-on: ubuntu-22.04
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Free Disk Space (Ubuntu)
+      - name: Free Disk Space
         uses: easimon/maximize-build-space@master
         with:
           root-reserve-mb: 8192
@@ -37,28 +37,25 @@ jobs:
           remove-codeql: 'true'
           remove-docker-images: 'true'
 
-      - name: Prepare Script
+      - name: Execute Script
         run: |
-          # Memberikan izin eksekusi pada script
-          chmod +x ksun.sh
+          # 1. Tentukan lokasi file (sesuai screenshot kamu)
+          SCRIPT_PATH=".github/workflows/ksun.sh"
           
-          # Mengganti konfigurasi di dalam ksun.sh sesuai input dari GitHub Actions
-          # Kita menggunakan sed untuk menimpa variabel di baris atas script
-          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' ksun.sh
-          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' ksun.sh
+          echo "=== Debug: Cek apakah file ada ==="
+          ls -l "$SCRIPT_PATH" || echo "File gak ketemu di $SCRIPT_PATH"
           
-          echo "=== Script Configuration Updated ==="
-          grep "KERNEL_NAME=" ksun.sh | head -n 1
-          grep "CLANG_CHOICE=" ksun.sh | head -n 1
+          # 2. Beri izin eksekusi
+          chmod +x "$SCRIPT_PATH"
+          
+          # 3. Inject settingan dari GitHub Actions ke dalam Script
+          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' "$SCRIPT_PATH"
+          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' "$SCRIPT_PATH"
+          
+          # 4. Jalankan Scriptnya
+          ./"$SCRIPT_PATH"
 
-      - name: Run KSUN Script
-        run: |
-          # Menjalankan script utama
-          # Kita tambahkan 'sudo -E' jika diperlukan environment variable, 
-          # tapi scriptmu sudah menangani sudo di dalamnya.
-          ./ksun.sh
-
-      - name: Upload to GitHub Artifacts
+      - name: Upload Artifact
         if: success()
         uses: actions/upload-artifact@v4
         with:
