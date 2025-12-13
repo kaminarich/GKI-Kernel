@@ -1,4 +1,4 @@
-Name: KSUN 3 Fixed (Ccache Fix)
+name: KSUN 3 Fixed (Ccache Fix)
 
 on:
   workflow_dispatch:
