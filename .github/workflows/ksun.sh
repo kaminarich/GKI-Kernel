@@ -18,7 +18,7 @@ fi
 
 set -e
 
-echo "=== STARTING BUILD SCRIPT (FULL MILLENNIUM + USER CONFIG) ==="
+echo "=== STARTING BUILD SCRIPT ==="
 echo "Kernel Name : $KERNEL_NAME"
 echo "Clang Ver   : $CLANG_VER"
 
@@ -40,7 +40,7 @@ if [ ! -d ".repo" ]; then
 fi
 repo sync -c --no-tags --no-clone-bundle --optimized-fetch -j$(nproc --all)
 
-# 3. Swap Source (MillenniumOSS)
+# 3. Swap Source
 echo -e "\n=== 3. Swap to MillenniumOSS ==="
 cd "$WORK_DIR"
 rm -rf common
@@ -97,9 +97,9 @@ sed -i 's/check_defconfig//' common/build.config.gki
 cat <<EOT >> $DEFCONFIG
 CONFIG_KSU=y
 CONFIG_KPM=n
-CONFIG_KSU_MANUAL_HOOK=y
+CONFIG_KSU_MANUAL_HOOK=n
 CONFIG_KSU_TRACEPOINT_HOOK=n
-CONFIG_KSU_KPROBES_HOOK=n
+CONFIG_KSU_KPROBES_HOOK=y
 # CONFIG_KSU_DEBUG is not set
 # CONFIG_KSU_MULTI_MANAGER_SUPPORT is not set
 # CONFIG_KSU_ALLOWLIST_WORKAROUND is not set
