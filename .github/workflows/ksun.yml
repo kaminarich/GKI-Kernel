@@ -1,4 +1,4 @@
-name: KSUN 3 Fixed
+Name: KSUN 3 Fixed (Ccache Fix)
 
 on:
   workflow_dispatch:
@@ -42,8 +42,9 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt update && sudo apt upgrade -y
+          # FIX: Added 'ccache' to the installation list below
           sudo apt install -y git curl repo build-essential bc bison flex libssl-dev \
-            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld
+            libelf-dev python3 python3-pip unzip zip rsync libncurses-dev lld ccache
 
       - name: Initialize Repo (Google Structure)
         run: |
@@ -65,7 +66,7 @@ jobs:
           git clone https://github.com/MillenniumOSS/android_kernel_common_android12-5.10.git common
           
           cd common
-          # Add Rama's remote for updates/patches
+          # Upstream remote is commented out as per your last script
           # echo "Adding upstream remote..."
           # git remote add rama https://github.com/ramabondanp/android_kernel_common-5.10.git
           # git fetch -j12 rama
