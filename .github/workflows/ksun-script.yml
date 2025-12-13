@@ -39,26 +39,24 @@ jobs:
 
       - name: Prepare Script
         run: |
-          # Definisikan path script
-          SCRIPT_PATH=".github/ksun.sh"
+          # Memberikan izin eksekusi pada script
+          chmod +x ksun.sh
           
-          echo "Preparing script at: $SCRIPT_PATH"
-          
-          # Memberikan izin eksekusi pada script di folder .github
-          chmod +x "$SCRIPT_PATH"
-          
-          # Mengganti konfigurasi di dalam script sesuai input
-          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' "$SCRIPT_PATH"
-          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' "$SCRIPT_PATH"
+          # Mengganti konfigurasi di dalam ksun.sh sesuai input dari GitHub Actions
+          # Kita menggunakan sed untuk menimpa variabel di baris atas script
+          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' ksun.sh
+          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' ksun.sh
           
           echo "=== Script Configuration Updated ==="
-          grep "KERNEL_NAME=" "$SCRIPT_PATH" | head -n 1
-          grep "CLANG_CHOICE=" "$SCRIPT_PATH" | head -n 1
+          grep "KERNEL_NAME=" ksun.sh | head -n 1
+          grep "CLANG_CHOICE=" ksun.sh | head -n 1
 
       - name: Run KSUN Script
         run: |
-          # Menjalankan script dari folder .github
-          ./.github/ksun.sh
+          # Menjalankan script utama
+          # Kita tambahkan 'sudo -E' jika diperlukan environment variable, 
+          # tapi scriptmu sudah menangani sudo di dalamnya.
+          ./ksun.sh
 
       - name: Upload to GitHub Artifacts
         if: success()
