@@ -1,13 +1,15 @@
-name: 1 Build KSUN (Env Style)
+name: Build KSUN Kernel
 
 on:
   workflow_dispatch:
     inputs:
       kernel_name:
+        description: 'Kernel Name'
         required: true
         default: 'Aetherium3.3-Eclipse-KSN'
         type: string
       clang_version:
+        description: 'Clang Version'
         required: true
         type: choice
         options:
@@ -17,6 +19,7 @@ on:
 
 jobs:
   build:
+    name: Build Kernel
     runs-on: ubuntu-22.04
 
     steps:
@@ -32,45 +35,39 @@ jobs:
           remove-android: 'true'
           remove-haskell: 'true'
           remove-codeql: 'true'
+          remove-docker-images: 'true'
 
-      - name: Prepare Script Location
+      - name: Download and Execute Script
         run: |
-          # 1. Tentukan nama file (mirip TARGET_CONFIG_FILENAME)
-          SCRIPT_NAME="ksun.sh"
+          echo "=== Downloading Script from Raw URL ==="
           
-          # 2. Tentukan lokasi folder (Sesuai screenshot lu: .github/workflows/)
-          # Kita pakai $GITHUB_WORKSPACE biar path-nya absolut/pasti
-          SCRIPT_DIR="$GITHUB_WORKSPACE/.github/workflows"
+          # Construct Raw URL based on repository and current branch
+          RAW_URL="https://raw.githubusercontent.com/${{ github.repository }}/${{ github.ref_name }}/.github/workflows/ksun.sh"
           
-          # 3. Gabungin jadi satu path lengkap
-          FULL_PATH="$SCRIPT_DIR/$SCRIPT_NAME"
+          echo "Target URL: $RAW_URL"
           
-          # 4. Cek file ada atau nggak (Safety check)
-          if [ -f "$FULL_PATH" ]; then
-              echo "✅ Script ditemukan di: $FULL_PATH"
-              # Masukin ke GITHUB_ENV biar bisa dipanggil step berikutnya
-              echo "KSUN_SCRIPT=$FULL_PATH" >> $GITHUB_ENV
-          else
-              echo "❌ Error: Script gak ketemu di $FULL_PATH"
-              echo "Pastikan lu run di branch yang bener (update-sukisu)!"
-              ls -R .github # Debugging bantu liat isi folder
-              exit 1
+          # Download script using curl with authentication
+          curl -H "Authorization: token ${{ secrets.GITHUB_TOKEN }}" -o ksun_run.sh -L "$RAW_URL"
+
+          # Verify download status (check for 404 error)
+          if grep -q "404: Not Found" ksun_run.sh; then
+            echo "Error: Failed to download script. File not found in the current branch."
+            echo "Please verify that '.github/workflows/ksun.sh' exists in branch: ${{ github.ref_name }}"
+            exit 1
           fi
 
-      - name: Execute Script
-        run: |
-          # Panggil path dari environment variable yang kita buat di atas
-          echo "Menjalankan script: ${{ env.KSUN_SCRIPT }}"
+          echo "Script downloaded successfully."
           
-          # Kasih izin eksekusi
-          chmod +x ${{ env.KSUN_SCRIPT }}
-          
-          # Inject variabel input ke dalam script
-          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' ${{ env.KSUN_SCRIPT }}
-          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' ${{ env.KSUN_SCRIPT }}
-          
-          # Jalankan
-          ${{ env.KSUN_SCRIPT }}
+          # Grant execution permissions
+          chmod +x ksun_run.sh
+
+          echo "=== Configuring Script Variables ==="
+          # Inject user inputs into the script
+          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' ksun_run.sh
+          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' ksun_run.sh
+
+          echo "=== Executing Script ==="
+          ./ksun_run.sh
 
       - name: Upload Artifact
         if: success()
