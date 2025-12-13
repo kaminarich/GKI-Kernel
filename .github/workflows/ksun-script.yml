@@ -1,0 +1,66 @@
+name: Build KSUN via Script
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_name:
+        description: 'Nama Kernel'
+        required: true
+        default: 'Aetherium3.3-Eclipse-KSN'
+        type: string
+      clang_version:
+        description: 'Versi Clang'
+        required: true
+        type: choice
+        options:
+          - '19'
+          - '20'
+        default: '19'
+
+jobs:
+  build:
+    name: Build ${{ inputs.kernel_name }} (Clang ${{ inputs.clang_version }})
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+
+      - name: Free Disk Space (Ubuntu)
+        uses: easimon/maximize-build-space@master
+        with:
+          root-reserve-mb: 8192
+          swap-size-mb: 10240
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Prepare Script
+        run: |
+          # Memberikan izin eksekusi pada script
+          chmod +x ksun.sh
+          
+          # Mengganti konfigurasi di dalam ksun.sh sesuai input dari GitHub Actions
+          # Kita menggunakan sed untuk menimpa variabel di baris atas script
+          sed -i 's/^KERNEL_NAME=".*"/KERNEL_NAME="${{ inputs.kernel_name }}"/' ksun.sh
+          sed -i 's/^CLANG_CHOICE=".*"/CLANG_CHOICE="${{ inputs.clang_version }}"/' ksun.sh
+          
+          echo "=== Script Configuration Updated ==="
+          grep "KERNEL_NAME=" ksun.sh | head -n 1
+          grep "CLANG_CHOICE=" ksun.sh | head -n 1
+
+      - name: Run KSUN Script
+        run: |
+          # Menjalankan script utama
+          # Kita tambahkan 'sudo -E' jika diperlukan environment variable, 
+          # tapi scriptmu sudah menangani sudo di dalamnya.
+          ./ksun.sh
+
+      - name: Upload to GitHub Artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.kernel_name }}-Image
+          path: gki/out/android12-5.10/common/arch/arm64/boot/Image
