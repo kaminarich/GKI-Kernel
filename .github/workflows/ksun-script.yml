@@ -1,3 +1,4 @@
+Ksun.yml
 name: Build KSUN Kernel
 
 on:
@@ -74,4 +75,5 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ inputs.kernel_name }}-Image
-          path: gki/out/android12-5.10/common/arch/arm64/boot/Image
+          # Perhatikan tanda * di akhir, ini akan mengambil Image DAN Image.gz
+          path: gki/out/android12-5.10/common/arch/arm64/boot/Image*
