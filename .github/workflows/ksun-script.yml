@@ -1,5 +1,4 @@
-Ksun.yml
-name: Build KSUN Kernel
+name: Build KSUN Kernel Script
 
 on:
   workflow_dispatch:
