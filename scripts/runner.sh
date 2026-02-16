@@ -17,6 +17,7 @@ WORK_DIR=$(pwd)
 OUT_DIR="${WORK_DIR}/out"
 CLANG_DIR="${WORK_DIR}/clang"
 KERNEL_SRC="${WORK_DIR}/android_kernel"
+PATCH_DIR="${WORK_DIR}/patches" # Definisi Path Patch Absolut
 
 # Set source URLs
 case "${KERNEL_VERSION}" in
@@ -57,11 +58,16 @@ Clang: ${CLANG_SOURCE}"
 mkdir -p "${OUT_DIR}"
 mkdir -p "${CLANG_DIR}"
 
-# 2. Get Toolchain (UPDATED PATH FIX)
+# 2. Generate Patches (DILAKUKAN DI ROOT SEBELUM CD)
+echo "Generating Patch Files..."
+cd "${WORK_DIR}"
+chmod +x scripts/patch_gen.sh
+./scripts/patch_gen.sh
+
+# 3. Get Toolchain
 echo "Downloading Toolchain (${CLANG_SOURCE})..."
-# Menggunakan path absolute WORK_DIR karena belum pindah directory
-chmod +x "${WORK_DIR}/scripts/clang_helper.sh"
-CLANG_URL=$("${WORK_DIR}/scripts/clang_helper.sh" "${CLANG_SOURCE}")
+chmod +x scripts/clang_helper.sh
+CLANG_URL=$(./scripts/clang_helper.sh "${CLANG_SOURCE}")
 
 if [ "$CLANG_URL" == "ERROR_INVALID_CLANG" ] || [ -z "$CLANG_URL" ]; then
     echo "❌ Error: Failed to fetch Clang URL for ${CLANG_SOURCE}"
@@ -83,19 +89,12 @@ fi
 
 export PATH="${CLANG_DIR}/bin:${PATH}"
 
-# 3. Get Kernel Source
+# 4. Get Kernel Source
 if [ ! -d "${KERNEL_SRC}" ]; then
     echo "Cloning Kernel Source..."
     git clone --depth 1 -b "${BRANCH}" "${REPO_URL}" "${KERNEL_SRC}"
 fi
 cd "${KERNEL_SRC}"
-
-# 4. Generate Patches
-echo "Generating Patch Files..."
-# Di sini kita sudah di dalam folder kernel, jadi pakai ../scripts/ itu BENAR
-chmod +x ../scripts/patch_gen.sh
-../scripts/patch_gen.sh
-PATCH_DIR="../patches"
 
 # 5. Apply Modifications
 echo "Applying Modifications..."
@@ -125,7 +124,7 @@ elif [ "${KSU_VARIANT}" == "susfs" ]; then
     # Clone SuSFS
     git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
     
-    # Apply SuSFS patches
+    # Apply SuSFS patches (Gunakan Absolute Path PATCH_DIR)
     git apply "${PATCH_DIR}/susfs/fixes.patch"
     
     ./scripts/config --file "arch/arm64/configs/${DEFCONFIG}" \
@@ -170,7 +169,6 @@ make -j$(nproc) \
 
 # 7. Run ABI Check
 echo "Running ABI Verification..."
-# Pindah balik ke WORK_DIR sebelum jalanin script python
 cd "${WORK_DIR}"
 python3 scripts/abi_audit.py \
     "${KERNEL_SRC}/${ABI_FILE}" \
