@@ -1,6 +1,18 @@
 #!/bin/bash
 set -e
 
+# --- [NEW] Telegram Function ---
+tg_send() {
+    if [ ! -z "${TG_BOT_TOKEN}" ]; then
+        curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
+        -d chat_id="${TG_CHAT_ID}" \
+        -d text="$1" \
+        -d parse_mode="Markdown" \
+        -d disable_web_page_preview=true > /dev/null
+    fi
+}
+# -------------------------------
+
 # Configuration
 WORK_DIR=$(pwd)
 OUT_DIR="${WORK_DIR}/out"
@@ -33,16 +45,44 @@ case "${KERNEL_VERSION}" in
         ;;
 esac
 
-echo "Starting build for Kernel ${KERNEL_VERSION} with variant ${KSU_VARIANT}"
+echo "Starting build for Kernel ${KERNEL_VERSION}"
+echo "Variant: ${KSU_VARIANT}"
+echo "Clang: ${CLANG_SOURCE}"
+
+tg_send "🚀 *GKI Build Started*
+Kernel: ${KERNEL_VERSION}
+Variant: ${KSU_VARIANT}
+Clang: ${CLANG_SOURCE}"
 
 # 1. Prepare Environment
 mkdir -p "${OUT_DIR}"
 mkdir -p "${CLANG_DIR}"
 
-# 2. Get Toolchain
-echo "Downloading Toolchain..."
-CLANG_URL=$(curl -s "https://api.github.com/repos/bachnxuan/aosp_clang_mirror/releases/latest" | grep "browser_download_url" | grep ".tar.gz" | cut -d '"' -f 4)
-curl -L "${CLANG_URL}" | tar -xz -C "${CLANG_DIR}"
+# 2. Get Toolchain (UPDATED)
+echo "Downloading Toolchain (${CLANG_SOURCE})..."
+chmod +x ../scripts/clang_helper.sh
+CLANG_URL=$(../scripts/clang_helper.sh "${CLANG_SOURCE}")
+
+if [ "$CLANG_URL" == "ERROR_INVALID_CLANG" ] || [ -z "$CLANG_URL" ]; then
+    echo "❌ Error: Failed to fetch Clang URL for ${CLANG_SOURCE}"
+    tg_send "❌ Build Failed: Invalid Clang Source"
+    exit 1
+fi
+
+echo "Downloading from: $CLANG_URL"
+
+# Logic extract beda-beda dikit tergantung ekstensi
+if [[ "$CLANG_URL" == *".tar.zst" ]]; then
+    curl -L "$CLANG_URL" | tar -I zstd -x -C "${CLANG_DIR}"
+elif [[ "$CLANG_URL" == *".tar.xz" ]]; then
+    curl -L "$CLANG_URL" | tar -xJ -C "${CLANG_DIR}"
+elif [[ "$CLANG_URL" == *".tar.gz" ]] || [[ "$CLANG_URL" == *".tgz" ]]; then
+    curl -L "$CLANG_URL" | tar -xz -C "${CLANG_DIR}"
+else
+    # Fallback generic tar
+    curl -L "$CLANG_URL" | tar -x -C "${CLANG_DIR}"
+fi
+
 export PATH="${CLANG_DIR}/bin:${PATH}"
 
 # 3. Get Kernel Source
@@ -52,13 +92,13 @@ if [ ! -d "${KERNEL_SRC}" ]; then
 fi
 cd "${KERNEL_SRC}"
 
-# 4. Generate Patches (Panggil script patch generator di sini)
+# 4. Generate Patches
 echo "Generating Patch Files..."
 chmod +x ../scripts/patch_gen.sh
 ../scripts/patch_gen.sh
 PATCH_DIR="../patches"
 
-# 5. Apply Modifications
+# 5. Apply Modifications (Includes Dirty Hacks)
 echo "Applying Modifications..."
 
 # Base Config
@@ -79,8 +119,7 @@ elif [ "${KSU_VARIANT}" == "susfs" ]; then
     # Clone SuSFS
     git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
     
-    # Copy SuSFS patches to kernel (or apply logic here)
-    # Applying the Generated Fixes for SuSFS
+    # Apply SuSFS patches (Fixes only for now)
     git apply "${PATCH_DIR}/susfs/fixes.patch"
     
     ./scripts/config --file "arch/arm64/configs/${DEFCONFIG}" \
@@ -93,13 +132,9 @@ elif [ "${KSU_VARIANT}" == "resukisu" ]; then
     echo "Integrating ReSukiSU (Manual Hook Mode)..."
     curl -LSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s main
     
-    # Apply Manager Patches
+    # Apply Manager & Manual Hook Patches
     git apply "${PATCH_DIR}/ksu/managers.patch"
-    
-    # Apply Manual Hooks
     git apply "${PATCH_DIR}/hooks/manual_hook.patch"
-
-    # Apply SuSFS Fixes (karena ReSukiSU butuh base SuSFS fixes kadang-kadang)
     git apply "${PATCH_DIR}/susfs/fixes.patch"
 
     ./scripts/config --file "arch/arm64/configs/${DEFCONFIG}" \
@@ -135,3 +170,5 @@ python3 scripts/abi_audit.py \
     "${OUT_DIR}/vmlinux.symvers" > "${OUT_DIR}/abi_report.txt"
 
 echo "Build Complete."
+tg_send "✅ *GKI Build Finished*
+Status: Success"
