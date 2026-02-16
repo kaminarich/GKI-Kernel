@@ -1,7 +1,7 @@
 #!/bin/bash
 set -e
 
-# --- [NEW] Telegram Function ---
+# --- Telegram Function ---
 tg_send() {
     if [ ! -z "${TG_BOT_TOKEN}" ]; then
         curl -s -X POST "https://api.telegram.org/bot${TG_BOT_TOKEN}/sendMessage" \
@@ -11,7 +11,6 @@ tg_send() {
         -d disable_web_page_preview=true > /dev/null
     fi
 }
-# -------------------------------
 
 # Configuration
 WORK_DIR=$(pwd)
@@ -58,10 +57,11 @@ Clang: ${CLANG_SOURCE}"
 mkdir -p "${OUT_DIR}"
 mkdir -p "${CLANG_DIR}"
 
-# 2. Get Toolchain (UPDATED)
+# 2. Get Toolchain (UPDATED PATH FIX)
 echo "Downloading Toolchain (${CLANG_SOURCE})..."
-chmod +x ../scripts/clang_helper.sh
-CLANG_URL=$(../scripts/clang_helper.sh "${CLANG_SOURCE}")
+# Menggunakan path absolute WORK_DIR karena belum pindah directory
+chmod +x "${WORK_DIR}/scripts/clang_helper.sh"
+CLANG_URL=$("${WORK_DIR}/scripts/clang_helper.sh" "${CLANG_SOURCE}")
 
 if [ "$CLANG_URL" == "ERROR_INVALID_CLANG" ] || [ -z "$CLANG_URL" ]; then
     echo "❌ Error: Failed to fetch Clang URL for ${CLANG_SOURCE}"
@@ -71,7 +71,6 @@ fi
 
 echo "Downloading from: $CLANG_URL"
 
-# Logic extract beda-beda dikit tergantung ekstensi
 if [[ "$CLANG_URL" == *".tar.zst" ]]; then
     curl -L "$CLANG_URL" | tar -I zstd -x -C "${CLANG_DIR}"
 elif [[ "$CLANG_URL" == *".tar.xz" ]]; then
@@ -79,7 +78,6 @@ elif [[ "$CLANG_URL" == *".tar.xz" ]]; then
 elif [[ "$CLANG_URL" == *".tar.gz" ]] || [[ "$CLANG_URL" == *".tgz" ]]; then
     curl -L "$CLANG_URL" | tar -xz -C "${CLANG_DIR}"
 else
-    # Fallback generic tar
     curl -L "$CLANG_URL" | tar -x -C "${CLANG_DIR}"
 fi
 
@@ -94,12 +92,20 @@ cd "${KERNEL_SRC}"
 
 # 4. Generate Patches
 echo "Generating Patch Files..."
+# Di sini kita sudah di dalam folder kernel, jadi pakai ../scripts/ itu BENAR
 chmod +x ../scripts/patch_gen.sh
 ../scripts/patch_gen.sh
 PATCH_DIR="../patches"
 
-# 5. Apply Modifications (Includes Dirty Hacks)
+# 5. Apply Modifications
 echo "Applying Modifications..."
+
+# Dirty Hacks
+sed -i '/pr_warn.*disagrees about version of symbol.*/,+1 s/.*/return 1;/' kernel/module.c
+if [ -f drivers/gpu/drm/drm_atomic_helper.c ]; then
+    sed -i '/^static int drm_atomic_check_valid_clones/,/^}/d' drivers/gpu/drm/drm_atomic_helper.c
+    sed -i '/ret = drm_atomic_check_valid_clones/,/return ret;/d' drivers/gpu/drm/drm_atomic_helper.c
+fi
 
 # Base Config
 ./scripts/config --file "arch/arm64/configs/${DEFCONFIG}" \
@@ -119,7 +125,7 @@ elif [ "${KSU_VARIANT}" == "susfs" ]; then
     # Clone SuSFS
     git clone --depth=1 https://gitlab.com/simonpunk/susfs4ksu.git ../susfs4ksu
     
-    # Apply SuSFS patches (Fixes only for now)
+    # Apply SuSFS patches
     git apply "${PATCH_DIR}/susfs/fixes.patch"
     
     ./scripts/config --file "arch/arm64/configs/${DEFCONFIG}" \
@@ -164,6 +170,7 @@ make -j$(nproc) \
 
 # 7. Run ABI Check
 echo "Running ABI Verification..."
+# Pindah balik ke WORK_DIR sebelum jalanin script python
 cd "${WORK_DIR}"
 python3 scripts/abi_audit.py \
     "${KERNEL_SRC}/${ABI_FILE}" \
