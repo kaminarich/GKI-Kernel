@@ -22,6 +22,21 @@ on:
           - 'standard'
           - 'susfs'
           - 'resukisu'
+      clang_source:
+        description: 'Clang Toolchain Source'
+        required: true
+        default: 'aosp'
+        type: choice
+        options:
+          - 'aosp'
+          - 'neutron'
+          - 'slim'
+          - 'rv'
+          - 'yuki'
+          - 'lilium'
+          - 'tnf'
+          - 'mandi-sa'
+          - 'dv'
       upload_artifacts:
         description: 'Upload Build Artifacts'
         required: true
@@ -33,6 +48,8 @@ jobs:
     runs-on: ubuntu-latest
     env:
       DEBIAN_FRONTEND: noninteractive
+      TG_CHAT_ID: ${{ secrets.TG_CHAT_ID }}
+      TG_BOT_TOKEN: ${{ secrets.TG_BOT_TOKEN }}
 
     steps:
       - name: Checkout Repository
@@ -41,26 +58,28 @@ jobs:
       - name: Install Dependencies
         run: |
           sudo apt-get update
+          # Tambah zstd buat extract neutron clang
           sudo apt-get install -y bc bison build-essential curl flex git gnupg gperf \
           liblz4-tool libncurses5-dev libsdl1.2-dev libssl-dev libxml2 libxml2-utils \
           lzop pngcrush rsync schedtool squashfs-tools xsltproc zip zlib1g-dev \
-          python3-pip python3-lxml
-          
+          python3-pip python3-lxml zstd
+
       - name: Execute Build Script
         run: |
-          chmod +x scripts/runner.sh
-          chmod +x scripts/abi_audit.py
+          chmod +x scripts/*.sh
+          chmod +x scripts/*.py
           ./scripts/runner.sh
         env:
           KERNEL_VERSION: ${{ inputs.kernel_version }}
           KSU_VARIANT: ${{ inputs.ksu_variant }}
+          CLANG_SOURCE: ${{ inputs.clang_source }}
           GH_TOKEN: ${{ secrets.GH_TOKEN }}
 
       - name: Upload Image
         if: inputs.upload_artifacts == true
         uses: actions/upload-artifact@v4
         with:
-          name: Image-${{ inputs.kernel_version }}-${{ inputs.ksu_variant }}
+          name: Image-${{ inputs.kernel_version }}-${{ inputs.ksu_variant }}-${{ inputs.clang_source }}
           path: out/arch/arm64/boot/Image
           
       - name: Upload ABI Check Report
