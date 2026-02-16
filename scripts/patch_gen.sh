@@ -8,7 +8,7 @@ mkdir -p patches/hooks
 echo "Generating patches..."
 
 # ==============================================================================
-# 1. KSU Manager Support (Ksu-add-manager.patch & ksun-add-more-managers.patch)
+# 1. KSU Manager Support
 # ==============================================================================
 cat << 'EOF' > patches/ksu/managers.patch
 diff --git a/kernel/Kbuild b/kernel/Kbuild
@@ -79,7 +79,7 @@ index 0000000..2222222 100644
 EOF
 
 # ==============================================================================
-# 2. SuSFS Fixes (Statfs CRC, Namespace, Proc Base, Task MMU)
+# 2. SuSFS Fixes (FIXED HEADERS)
 # ==============================================================================
 cat << 'EOF' > patches/susfs/fixes.patch
 diff --git a/fs/statfs.c b/fs/statfs.c
@@ -116,7 +116,7 @@ diff --git a/fs/namespace.c b/fs/namespace.c
 index 8970a57abe10..012bd401cbc7 100644
 --- a/fs/namespace.c
 +++ b/fs/namespace.c
-@@ -32,11 +32,37 @@
+@@ -32,10 +32,35 @@
  #include <linux/fs_context.h>
  #include <linux/shmem_fs.h>
  #include <linux/mnt_idmapping.h>
@@ -170,7 +170,7 @@ index bf966767d3fb..c91bfbda7755 100644
 EOF
 
 # ==============================================================================
-# 3. Manual Hooks (drivers/input/input.c, fs/exec.c, fs/open.c, etc)
+# 3. Manual Hooks
 # ==============================================================================
 cat << 'EOF' > patches/hooks/manual_hook.patch
 diff --git a/drivers/input/input.c b/drivers/input/input.c
