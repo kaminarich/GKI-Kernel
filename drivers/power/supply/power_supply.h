@@ -9,9 +9,16 @@
  *  Modified: 2004, Oct     Szabolcs Gyurko
  */
 
+#include <linux/power_supply.h>
+
 struct device;
 struct device_type;
 struct power_supply;
+
+/* aetherium_chg_floor.c */
+void aeth_chg_floor_init(void);
+int aeth_chg_floor_filter(const char *psy_name, enum power_supply_property psp,
+			  int ua);
 
 #ifdef CONFIG_SYSFS
 

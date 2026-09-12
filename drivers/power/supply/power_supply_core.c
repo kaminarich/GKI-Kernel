@@ -975,8 +975,19 @@ int power_supply_set_property(struct power_supply *psy,
 			    enum power_supply_property psp,
 			    const union power_supply_propval *val)
 {
+	union power_supply_propval bounded;
+
 	if (atomic_read(&psy->use_cnt) <= 0 || !psy->desc->set_property)
 		return -ENODEV;
+
+	if (psp == POWER_SUPPLY_PROP_INPUT_CURRENT_LIMIT ||
+	    psp == POWER_SUPPLY_PROP_CONSTANT_CHARGE_CURRENT_MAX) {
+		bounded = *val;
+		bounded.intval = aeth_chg_floor_filter(psy->desc->name, psp,
+						       val->intval);
+		if (bounded.intval != val->intval)
+			val = &bounded;
+	}
 
 	return psy->desc->set_property(psy, psp, val);
 }
@@ -1464,6 +1475,7 @@ static int __init power_supply_class_init(void)
 
 	power_supply_class->dev_uevent = power_supply_uevent;
 	power_supply_init_attrs(&power_supply_dev_type);
+	aeth_chg_floor_init();
 
 	return 0;
 }
