@@ -1,0 +1,210 @@
+name: Build GKI Kernel
+
+# Android 12 / Linux 5.10 GKI (android12-5.10, KMI generation 9).
+#
+#  - KernelSU-Next is added at build time only (nothing is committed or pushed).
+#  - KernelSU-Next v3.4.x ships SUSFS as a separate loadable module, not as kernel
+#    patches. This workflow builds that module (susfs_guard_lkm.ko) against YOUR kernel
+#    build, so its symbol versions match this exact kernel.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ksu_ref:
+        description: "KernelSU-Next tag (v3.4.2). Type 'none' to build without KernelSU"
+        required: false
+        default: "v3.4.2"
+        type: string
+      build_susfs:
+        description: "Also build the SUSFS module (susfs_guard_lkm.ko)"
+        required: false
+        default: true
+        type: boolean
+      localversion:
+        description: "Kernel name suffix. Keep the -android12-9 part, e.g. -android12-9-Xenizth. Empty = leave as is"
+        required: false
+        default: "-android12-9-Xenizth"
+        type: string
+      lto:
+        description: "LTO mode. keep = what gki_defconfig says (Full), thin = lighter on RAM and much faster"
+        required: false
+        default: "keep"
+        type: choice
+        options: [keep, thin]
+
+permissions:
+  contents: read
+
+env:
+  ARCH: arm64
+  # A fixed timestamp keeps the build reproducible and helps ccache reuse results.
+  KBUILD_BUILD_TIMESTAMP: "Thu Jan  1 00:00:00 UTC 2026"
+  KBUILD_BUILD_USER: xenizth
+  KBUILD_BUILD_HOST: github
+
+jobs:
+  build:
+    name: Build ARM64 GKI Kernel
+    runs-on: ubuntu-22.04
+    timeout-minutes: 360
+
+    steps:
+      - name: Maximize disk space
+        uses: easimon/maximize-build-space@v10
+        with:
+          root-reserve-mb: '8192'
+          temp-reserve-mb: '2048'
+          swap-size-mb: '8192'
+          remove-dotnet: 'true'
+          remove-android: 'true'
+          remove-haskell: 'true'
+          remove-codeql: 'true'
+          remove-docker-images: 'true'
+
+      - name: Checkout kernel
+        uses: actions/checkout@v4
+        with:
+          ref: aetherium
+          fetch-depth: 1
+          submodules: recursive
+
+      - name: Install dependencies
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          sudo apt-get update
+          sudo apt-get install -y bc bison build-essential clang curl flex git \
+            libelf-dev liblz4-tool libncurses-dev libssl-dev lld llvm lz4 pahole \
+            python3 rsync unzip zip
+
+      - name: Setup ccache
+        uses: hendrikmuhs/ccache-action@v1.2
+        with:
+          key: gki-${{ inputs.lto }}
+          max-size: 5G
+
+      - name: Show build environment
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          echo "Kernel commit: $(git rev-parse HEAD)"
+          echo "Kernel version: $(make ARCH=arm64 LLVM=1 LLVM_IAS=1 kernelversion)"
+          clang --version | head -n 1
+          echo "CPU cores: $(nproc)"
+          free -h
+          df -h "$GITHUB_WORKSPACE"
+
+      # Done at build time only: nothing is committed or pushed to the repo.
+      - name: Install KernelSU-Next
+        if: ${{ inputs.ksu_ref != 'none' }}
+        shell: bash
+        env:
+          KSU_REF: ${{ inputs.ksu_ref || 'v3.4.2' }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf KernelSU-Next drivers/kernelsu
+          curl -fLSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/${KSU_REF}/kernel/setup.sh" | bash -s "$KSU_REF"
+          [[ -d KernelSU-Next ]] || { echo "::error::KernelSU-Next directory was not created."; exit 1; }
+
+          # setup.sh silently stays on the default branch if the tag doesn't exist.
+          if [[ "$KSU_REF" =~ ^v[0-9] ]]; then
+            got="$(git -C KernelSU-Next describe --tags --exact-match 2>/dev/null || true)"
+            if [[ "$got" != "$KSU_REF" ]]; then
+              echo "::error::Requested KernelSU-Next '$KSU_REF' but checkout is at '${got:-$(git -C KernelSU-Next describe --tags --always)}'"
+              exit 1
+            fi
+          fi
+          echo "KernelSU-Next: $(git -C KernelSU-Next describe --tags --always) ($(git -C KernelSU-Next rev-parse --short HEAD))"
+
+      - name: Configure kernel
+        shell: bash
+        env:
+          LOCALVERSION_IN: ${{ inputs.localversion }}
+          LTO_MODE: ${{ inputs.lto }}
+          WITH_KSU: ${{ inputs.ksu_ref != 'none' }}
+        run: |
+          set -Eeuo pipefail
+          rm -rf out
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 gki_defconfig
+          chmod +x scripts/config
+          CFG=(scripts/config --file out/.config)
+
+          if [[ "$WITH_KSU" == "true" ]]; then
+            "${CFG[@]}" --enable CONFIG_KPROBES --enable CONFIG_KPROBE_EVENTS --enable CONFIG_KSU
+          fi
+
+          # Kernel name: shown in Settings and `uname -r`. Never auto-append a git hash or -dirty.
+          if [[ -n "$LOCALVERSION_IN" ]]; then
+            "${CFG[@]}" --set-str CONFIG_LOCALVERSION "$LOCALVERSION_IN" --disable CONFIG_LOCALVERSION_AUTO
+          fi
+
+          if [[ "$LTO_MODE" == "thin" ]]; then
+            "${CFG[@]}" --disable CONFIG_LTO_CLANG_FULL --enable CONFIG_LTO_CLANG_THIN
+          fi
+
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 olddefconfig
+
+          echo '===== Resulting config ====='
+          grep -E '^CONFIG_(KPROBES|KPROBE_EVENTS|KSU|LOCALVERSION|LOCALVERSION_AUTO|LTO_CLANG_FULL|LTO_CLANG_THIN|CFI_CLANG|MODULES|MODVERSIONS|KALLSYMS_ALL)(=| )' out/.config || true
+          grep -E '^# CONFIG_(KSU|LTO_CLANG_FULL|LTO_CLANG_THIN) ' out/.config || true
+
+      - name: Build kernel
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          ccache --zero-stats
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 \
+            CC='ccache clang' \
+            HOSTCC='ccache clang' \
+            HOSTCXX='ccache clang++' \
+            -j"$(nproc)"
+          echo "Kernel release: $(cat out/include/config/kernel.release)"
+
+      # SUSFS (KernelSU-Next v3.4.x) is a loadable module built against this kernel tree.
+      - name: Build SUSFS module
+        if: ${{ inputs.ksu_ref != 'none' && inputs.build_susfs }}
+        # A failure here must not throw away the kernel Image that already built.
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          [[ -d KernelSU-Next/kernel/susfs ]] || { echo "::error::This KernelSU-Next has no kernel/susfs module sources."; exit 1; }
+          # The module uses kernel symbols that aren't exported (task_work_add, init_mm,
+          # __set_fixmap, ...). It finds them itself when it is loaded with `ksud insmod`,
+          # so modpost must treat "undefined symbol" as a warning, not an error.
+          make O=out ARCH=arm64 LLVM=1 LLVM_IAS=1 CC='ccache clang' \
+            KBUILD_MODPOST_WARN=1 \
+            M="$PWD/KernelSU-Next/kernel/susfs" -j"$(nproc)" modules
+          ls -la KernelSU-Next/kernel/susfs/susfs_guard_lkm.ko
+          modinfo KernelSU-Next/kernel/susfs/susfs_guard_lkm.ko | grep -E '^(vermagic|name|depends):' || true
+
+      - name: ccache stats
+        if: always()
+        shell: bash
+        run: ccache -s || true
+
+      - name: Collect artifacts
+        shell: bash
+        run: |
+          set -Eeuo pipefail
+          mkdir -p artifacts
+          B=out/arch/arm64/boot
+          [[ -f "$B/Image" ]] || { echo '::error::No kernel Image was produced.'; exit 1; }
+          cp "$B/Image" artifacts/Image
+          [[ -f "$B/Image.lz4" ]] && cp "$B/Image.lz4" artifacts/Image.lz4 || true
+          [[ -f "$B/Image.gz" ]]  && cp "$B/Image.gz"  artifacts/Image.gz  || true
+          [[ -f out/System.map ]] && cp out/System.map artifacts/System.map || true
+          [[ -f out/Module.symvers ]] && cp out/Module.symvers artifacts/Module.symvers || true
+          cp out/.config artifacts/kernel.config
+          cp out/include/config/kernel.release artifacts/kernel.release
+          [[ -f KernelSU-Next/kernel/susfs/susfs_guard_lkm.ko ]] && cp KernelSU-Next/kernel/susfs/susfs_guard_lkm.ko artifacts/ || true
+          ls -lah artifacts
+
+      - name: Upload kernel artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: GKI-${{ inputs.ksu_ref }}-${{ github.sha }}
+          path: artifacts/
+          if-no-files-found: error
+          compression-level: 0
+          retention-days: 14
